@@ -1,0 +1,17 @@
+# Core dependencies from qwen-image-mps
+torch>=2.0.0
+torchvision>=0.15.0
+diffusers>=0.35.0
+transformers>=4.35.0
+accelerate>=0.25.0
+safetensors>=0.4.0
+huggingface-hub>=0.20.0
+Pillow>=9.0.0
+
+# Web server
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+starlette>=0.37.0
+
+# Optional utilities
+tqdm>=4.65.0
