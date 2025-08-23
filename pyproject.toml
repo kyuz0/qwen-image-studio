@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project]
+name = "qwen-image-mps"
+version = "0.4.2"
+description = "Generate images with Qwen-Image on Apple Silicon (MPS) and other devices"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Ivan Fioravanti", email = "ivanfioravanti@users.noreply.github.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "diffusers>=0.35.0",
+    "transformers>=4.35.0",
+    "accelerate>=0.25.0",
+    "safetensors>=0.4.0",
+    "huggingface-hub>=0.20.0",
+    "Pillow>=9.0.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "ruff",
+    "pre-commit",
+]
+
+[project.urls]
+Homepage = "https://github.com/ivanfioravanti/qwen-image-mps"
+Repository = "https://github.com/ivanfioravanti/qwen-image-mps"
+Issues = "https://github.com/ivanfioravanti/qwen-image-mps/issues"
+
+[project.scripts]
+qwen-image-mps = "qwen_image_mps.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qwen_image_mps"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+]
