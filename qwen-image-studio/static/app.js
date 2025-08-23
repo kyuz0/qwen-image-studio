@@ -240,9 +240,13 @@ function updateQueue() {
                 ${(() => {
                     const p = job.params || {};
                     const tags = [];
-                    if (p.ultra_fast === true || p.ultra_fast === "true") tags.push("Ultra Fast");
-                    else if (p.fast === true || p.fast === "true") tags.push("Fast");
-                    if (p.steps) tags.push(`${p.steps} steps`);
+                    if (p.ultra_fast === true || p.ultra_fast === "true") {
+                        tags.push("Ultra Fast (4 steps)");
+                    } else if (p.fast === true || p.fast === "true") {
+                        tags.push("Fast (8 steps)");
+                    } else if (p.steps) {
+                        tags.push(`${p.steps} steps`);
+                    }                 
                     if (p.seed) tags.push(`Seed ${p.seed}`);
                     if (job.type === "generate" && p.size) tags.push(p.size);
                     return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
@@ -406,7 +410,9 @@ async function submitForm(e) {
     const size = e.target.size.value || "16:9";
 
     fd.append('prompt', prompt);
-    fd.append('steps', steps);
+    if (!(fast || ultra_fast)) {
+        fd.append('steps', steps);
+    }    
     fd.append('fast', String(fast));
     fd.append('ultra_fast', String(ultra_fast));
     fd.append('batman', String(batman));
