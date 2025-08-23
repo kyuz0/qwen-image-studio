@@ -460,7 +460,8 @@ async def process_queue():
                         job["stages"]["lora_loading"]["status"] = "active"
                         await hub.broadcast({"type": "job_update", "job": job})
 
-                if "steps, CFG scale" in line:
+                if ("Denoising started" in line) or ("steps, CFG scale" in line) 
+                    or ("Editing config:" in line) or ("Generation config:" in line):
                     for s in ("model_loading", "pipeline_loading", "lora_loading"):
                         if s in job["stages"] and job["stages"][s]["status"] == "active":
                             job["stages"][s]["status"] = "completed"
