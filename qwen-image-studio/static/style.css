@@ -1,0 +1,689 @@
+:root {
+    --pico-font-size: 14px;
+    --border-radius: 10px;
+}
+
+/* --- Header --- */
+.headerbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 1rem 0 1.25rem;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: .75rem
+}
+
+.brand .logo {
+    font-size: 22px
+}
+
+.brand-text h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 700
+}
+
+.muted {
+    color: var(--pico-muted-color)
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: .75rem
+}
+
+.theme-toggle {
+    background: transparent;
+    border: 1px solid var(--pico-border-color);
+    border-radius: 999px;
+    padding: .35rem .6rem;
+    font-size: .9rem
+}
+
+/* --- GPU stats --- */
+.gpu-stats {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    color: var(--pico-color);
+    font-size: .9rem;
+    font-weight: 500;
+}
+
+.gpu-stat-item {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+.gpu-stat-bar {
+    width: 50px;
+    height: 6px;
+    background: var(--pico-muted-border-color);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--pico-border-color);
+}
+
+.gpu-stat-fill {
+    height: 100%;
+    background: var(--pico-primary);
+    transition: width .5s ease;
+    min-width: 2px;
+}
+
+.gpu-stat-fill.high {
+    background: #ff4444;
+}
+
+.gpu-stat-fill.medium {
+    background: #ff9933;
+}
+
+.gpu-stat-fill.low {
+    background: #4488ff;
+}
+
+/* --- Tabs attached to content (Pico colors) --- */
+.tabs {
+    display: flex;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    gap: .25rem;
+    margin-bottom: 0
+}
+
+/* --- Content card right under tabs --- */
+.card{
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-top: none;
+  border-radius: 0 0 var(--border-radius) var(--border-radius);
+  padding: 1rem;
+}
+
+
+/* --- Form bits --- */
+.input-group {
+    margin-bottom: 1.5rem
+}
+
+.input-group label {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: .5rem;
+    display: block;
+    color: var(--pico-color)
+}
+
+textarea,
+input[type="text"],
+input[type="number"] {
+    font-size: 14px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--pico-border-color);
+    background: var(--pico-card-background-color);
+}
+
+textarea {
+    min-height: 80px;
+    resize: vertical
+}
+
+.upload-area{
+  border: 2px dashed var(--pico-muted-border-color);
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+}
+
+
+.upload-area.dragover {
+    border-color: var(--pico-primary);
+    background: var(--pico-primary-background)
+}
+
+.upload-preview {
+    max-width: 150px;
+    max-height: 150px;
+    margin: 1rem auto;
+    border-radius: 8px;
+    display: block
+}
+
+.options-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem
+}
+
+.checkbox-group {
+    display: flex;
+    gap: 1.5rem;
+    margin-top: 1rem
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: 13px
+}
+
+.generate-btn {
+    width: 100%;
+    padding: 14px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 8px;
+    margin-bottom: .5rem;
+    /* remove background / color overrides */
+}
+
+/* --- Jobs container --- */
+.jobs-card{
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--border-radius);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+
+
+/* Stage rows (label | bar | %/✓ on right) */
+.stage-row {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin: .25rem 0;
+    padding: .15rem 0;
+    border-bottom: 1px dashed var(--pico-muted-border-color)
+}
+
+.stage-row:last-child {
+    border-bottom: none
+}
+
+.stage-label {
+    width: 100px;
+    font-weight: 500;
+    color: var(--pico-muted-color);
+    font-size: .9rem
+}
+
+.stage-progress {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: .5rem
+}
+
+.stage-progress progress {
+    flex: 1;
+    margin: 0;
+    height: 6px
+}
+
+.stage-status {
+    width: 54px;
+    text-align: right;
+    white-space: nowrap;
+    font-size: .85rem;
+    color: var(--pico-muted-color);
+    font-weight: 600
+}
+
+.stages-container {
+    margin: .5rem 0;
+}
+
+/* --- Sticky footer --- */
+html,
+body {
+    height: 100%
+}
+
+.container {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column
+}
+
+main {
+    flex: 1 0 auto
+}
+
+.site-footer {
+    margin-top: auto;
+    display: flex;
+    justify-content: right;
+    align-items: center;
+    color: var(--pico-muted-color);
+    font-size: .9rem;
+    border-top: 1px solid var(--pico-border-color);
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.links {
+    display: flex;
+    gap: 1rem;
+    align-items: center
+}
+
+.footer-link {
+    display: inline-flex;
+    gap: .4rem;
+    align-items: center;
+    color: var(--pico-muted-color);
+    text-decoration: none
+}
+
+.footer-link:hover {
+    color: var(--pico-primary)
+}
+
+.hidden {
+    display: none
+}
+
+/* Status pill */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .25rem .6rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: .75rem;
+    border: 1px solid var(--pico-muted-border-color);
+    color: var(--pico-color);
+    background: var(--pico-secondary-background);
+}
+
+.status-processing {
+    color: var(--pico-primary);
+    border-color: var(--pico-primary);
+    background: var(--pico-primary-background);
+}
+
+.status-completed {
+    color: #2e7d32;
+    border-color: #2e7d32;
+    background: color-mix(in oklab, #2e7d32 12%, transparent);
+}
+
+.status-failed {
+    color: #b00020;
+    border-color: #b00020;
+    background: color-mix(in oklab, #b00020 10%, transparent);
+}
+
+.status-cancelled {
+    color: var(--pico-muted-color);
+    border-style: dashed;
+}
+
+/* Tiny spinner */
+.spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--pico-muted-border-color);
+    border-top-color: var(--pico-primary);
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem
+}
+
+.gallery a {
+    display: block
+}
+
+.gallery img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid var(--pico-border-color)
+}
+
+textarea,
+input[type="text"],
+input[type="number"],
+select{
+  font-size: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+}
+
+
+/* New job card layout */
+.job-card {
+    background: var(--pico-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: .75rem 0;
+}
+
+.job-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.job-info {
+    flex: 1;
+    min-width: 0;
+    /* Allows text to truncate */
+}
+
+.job-info header {
+    font-weight: 600;
+    margin-bottom: .25rem;
+}
+
+.job-info small.muted {
+    display: block;
+    margin: .15rem 0;
+}
+
+.job-stages {
+    flex: 2;
+    min-width: 200px;
+}
+
+/* Thumbnail area */
+.job-thumbnail {
+    order: -1;
+    width: 80px;
+    height: 80px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 2px solid var(--pico-muted-border-color);
+    position: relative;
+    overflow: hidden;
+}
+
+.thumbnail-completed {
+    cursor: pointer;
+    border-color: var(--pico-primary);
+}
+
+.thumbnail-completed:hover {
+    opacity: 0.8;
+}
+
+.thumbnail-completed img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.thumbnail-generating {
+    background: var(--pico-primary-background);
+    border-color: var(--pico-primary);
+}
+
+.thumbnail-failed {
+    background: color-mix(in oklab, #b00020 10%, transparent);
+    border-color: #b00020;
+    color: #b00020;
+}
+
+.thumbnail-pending {
+    background: var(--pico-secondary-background);
+    color: var(--pico-muted-color);
+}
+
+.error-icon,
+.queue-icon,
+.pending-icon {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+/* Job error message */
+.job-error {
+    color: var(--pico-del-color);
+    margin: .5rem 0 0 0;
+    font-size: .9rem;
+}
+
+/* Job actions footer */
+.job-actions {
+    display: flex;
+    gap: .5rem;
+    margin-top: .75rem;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .job-content {
+        flex-direction: column;
+    }
+
+    .job-stages {
+        min-width: unset;
+    }
+
+    .job-thumbnail {
+        align-self: center;
+    }
+}
+
+.job-prompt {
+    cursor: pointer;
+    color: var(--pico-muted-color);
+    font-size: 0.9rem;
+    line-height: 1.4;
+    margin: 0.25rem 0 0.5rem 0;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.job-prompt:not(.expanded) {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    max-height: 2.8em;
+}
+
+.job-prompt.expanded {
+    background: var(--pico-secondary-background);
+    white-space: pre-wrap;
+    max-height: none;
+}
+
+.job-prompt:hover {
+    background: var(--pico-secondary-background);
+    color: var(--pico-color);
+}
+
+.job-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+}
+
+
+.generate-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: .125rem .5rem;
+    border-radius: 999px;
+    font-size: .75rem;
+    font-weight: 600
+}
+
+.status-pill.queued {
+    background: #eef3ff
+}
+
+.status-pill.processing {
+    background: #fff6e5
+}
+
+.status-pill.cancelling {
+    background: #ffeef0
+}
+
+.status-pill.cancelled {
+    background: #fce7f3
+}
+
+.status-pill.failed {
+    background: #fde8e8
+}
+
+.status-pill.completed {
+    background: #e8f5e9
+}
+
+/* Tabs attach to card (hide seam) */
+.tabs { margin-bottom: 0; }
+.tabs + .card { margin-top: -1px; }
+
+/* Card under tabs: one clean definition */
+.card{
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-border-color);
+  border-top: none;
+  border-radius: 0 0 var(--border-radius) var(--border-radius);
+  padding: 1rem;
+}
+
+/* Options accordion: simple, readable, consistent (both themes) */
+details.options > summary{
+  display:flex; align-items:center; gap:.5rem;
+  padding: 1rem 1rem; font-weight:600; cursor:pointer; user-select:none;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius:8px;
+  margin-bottom: 0px;
+}
+
+details.options[open] > summary{ border-bottom-left-radius:0; border-bottom-right-radius:0; }
+
+details.options .options-grid{
+  display:grid; grid-template-columns:1fr 1fr;
+  gap:.55rem; padding:.6rem;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border:1px solid var(--pico-muted-border-color);
+  border-top:none; border-radius:0 0 8px 8px;
+}
+.options-grid .input-group{ margin-bottom:.4rem; }
+.options-grid .input-group label{ margin-bottom:.35rem; }
+.checkbox-group{ gap:.75rem; margin-top:.2rem; }
+.options-grid select{ max-width: 280px; }
+
+/* Inputs: follow surface, not pitch black in dark */
+textarea, input[type="text"], input[type="number"], select{
+  background: var(--pico-background-color);
+}
+
+/* Jobs card: one definition */
+.jobs-card{
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-border-color);
+  border-radius: var(--border-radius);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+
+/* Lighter tabs (both themes) */
+/* Tabs: minimalist nav look */
+/* Tabs: left aligned, underline runs full width */
+.tabs {
+  display: flex;
+  justify-content: flex-start;
+  gap: 2rem;
+  border-bottom: 3px solid var(--pico-muted-border-color);
+}
+
+.tab-button {
+  background: none;
+  border: none;
+  padding: .6rem 0;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  position: relative;
+  transition: color .2s;
+}
+
+.tab-button:hover {
+  color: var(--pico-color);
+}
+
+.tab-button.active {
+  color: var(--pico-primary);
+}
+
+.tab-button.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--pico-primary);
+  border-radius: 2px;
+}
+
+.tab-button:focus,
+.tab-button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.job-params {
+  display: block;
+  margin: .15rem 0 .3rem 0;
+  font-size: .8rem;
+  color: var(--pico-muted-color);
+}

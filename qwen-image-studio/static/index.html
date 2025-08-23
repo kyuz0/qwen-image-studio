@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Qwen Image Studio</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/picocss/2.0.6/pico.min.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+    <div class="container">
+        <header class="headerbar">
+            <div class="brand">
+                <span class="logo">🎨</span>
+                <div class="brand-text">
+                    <h1>Qwen Image Studio</h1>
+                    <small class="muted">Text-to-image & Image edit</small>
+                </div>
+            </div>
+
+            <div class="header-right">
+                <div class="gpu-stats" id="gpuStats" style="display:none;">
+                    <div class="gpu-stat-item">
+                        <span>GPU</span>
+                        <div class="gpu-stat-bar">
+                            <div class="gpu-stat-fill" id="gpuUtilBar"></div>
+                        </div>
+                        <span id="gpuUtilText">0%</span>
+                    </div>
+                    <div class="gpu-stat-item">
+                        <span>VRAM</span>
+                        <div class="gpu-stat-bar">
+                            <div class="gpu-stat-fill" id="vramBar"></div>
+                        </div>
+                        <span id="vramText">0/0MB</span>
+                    </div>
+                    <div class="gpu-stat-item">
+                        <span>GTT</span>
+                        <div class="gpu-stat-bar">
+                            <div class="gpu-stat-fill" id="gttBar"></div>
+                        </div>
+                        <span id="gttText">0/0MB</span>
+                    </div>
+                    <div class="gpu-stat-item">
+                        <span id="tempText">0°C</span>
+                    </div>
+                </div>
+                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Tabs attached to content, using Pico defaults -->
+            <nav class="tabs" role="tablist">
+                <button class="tab-button active" role="tab" aria-selected="true" data-mode="generate">
+                    ✨ Generate
+                </button>
+                <button class="tab-button" role="tab" aria-selected="false" data-mode="edit">
+                    ✏️ Edit
+                </button>
+            </nav>
+
+            <section class="card">
+                <form id="imageForm">
+                    <div id="editSection" class="hidden" aria-hidden="true">
+                        <div class="input-group">
+                            <label>Upload Image</label>
+                            <div class="upload-area" id="uploadArea">
+                                <p>📁 Drop image here or click to upload</p>
+                                <input type="file" id="imageInput" accept="image/*" hidden />
+                                <img id="uploadPreview" class="upload-preview hidden" alt="Preview" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Prompt</label>
+                        <textarea name="prompt"
+                            placeholder="Dog chasing a cat on the streets of London with the Shard in the background, cinematic, 4k"
+                            required></textarea>
+                    </div>
+
+                    <details class="options" open>
+                        <summary>⚙️ Options</summary>
+                        <div class="options-grid">
+                            <div class="input-group">
+                                <label>Steps</label>
+                                <input type="number" name="steps" placeholder="50" min="1" max="200" />
+                            </div>
+                            <div class="input-group">
+                                <label>Seed</label>
+                                <input type="number" name="seed" placeholder="Random" />
+                            </div>
+
+                            <div class="input-group span-2" id="resolution-field">
+                                <label for="size">Resolution</label>
+                                <select id="size" name="size">
+                                    <option value="16:9" selected>1664×928 (16:9)</option>
+                                    <option value="9:16">928×1664 (9:16)</option>
+                                    <option value="1:1">1328×1328 (1:1)</option>
+                                    <option value="4:3">1472×1140 (4:3)</option>
+                                    <option value="3:4">1140×1472 (3:4)</option>
+                                    <option value="3:2">1584×1056 (3:2)</option>
+                                    <option value="2:3">1056×1584 (2:3)</option>
+                                </select>
+                            </div>
+
+                            <div class="checkbox-group span-2">
+                                <label class="checkbox-item"><input type="checkbox" name="fast" /> Fast (8
+                                    steps)</label>
+                                <label class="checkbox-item"><input type="checkbox" name="ultra_fast" /> Ultra Fast (4
+                                    steps)</label>
+                                <label class="checkbox-item"><input type="checkbox" name="batman" /> 🦇 Batman</label>
+                            </div>
+                        </div>
+                    </details>
+
+
+                    <button type="submit" class="generate-btn" id="submitBtn">
+                        <span id="submitBtnIcon">✨</span> <span id="submitBtnText">Generate Image</span>
+                    </button>
+                </form>
+            </section>
+
+            <section id="jobQueue" class="jobs-card hidden">
+                <h3>Active Jobs</h3>
+                <div id="jobList"></div>
+            </section>
+        </main>
+
+        <footer class="site-footer">
+            <div class="links">
+                <a href="https://github.com/kyuz0/qwen-image-studio" target="_blank" rel="noopener" class="footer-link"
+                    title="GitHub repository">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                        <path fill="currentColor"
+                            d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2.01c-3.22.7-3.9-1.55-3.9-1.55-.53-1.35-1.28-1.71-1.28-1.71-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.57-.29-5.27-1.28-5.27-5.7 0-1.26.45-2.29 1.2-3.1-.12-.29-.52-1.46.11-3.04 0 0 .98-.31 3.2 1.18a11.1 11.1 0 0 1 5.83 0c2.22-1.49 3.2-1.18 3.2-1.18.63 1.58.23 2.75.12 3.04.75.81 1.2 1.84 1.2 3.1 0 4.43-2.71 5.41-5.29 5.7.41.35.77 1.04.77 2.1v3.11c0 .31.21.68.79.56A11.5 11.5 0 0 0 12 .5Z" />
+                    </svg>
+                    <span>GitHub</span>
+                </a>
+                <a href="#" class="footer-link" title="YouTube demo (coming soon)">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                        <path fill="currentColor"
+                            d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.7 31.7 0 0 0 0 12a31.7 31.7 0 0 0 .6 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.3.6 9.3.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1c.4-1.9.6-3.8.6-5.8 0-2-.2-3.9-.6-5.8zM9.7 15.5V8.5l6 3.5-6 3.5z" />
+                    </svg>
+                    <span>YouTube (soon)</span>
+                </a>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/app.js" defer></script>
+</body>
+
+</html>

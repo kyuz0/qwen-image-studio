@@ -1,7 +1,94 @@
 import argparse
 import os
 import secrets
+import sys
+import shlex
+import time
+import torch
+import sys
 from datetime import datetime
+from contextlib import contextmanager
+from threading import Event, Thread
+from PIL.PngImagePlugin import PngInfo
+from pathlib import Path
+
+def get_output_dir():
+    """Get the default output directory for images."""
+    output_dir = Path.home() / ".qwen-image-studio"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
+
+def _full_command_line() -> str:
+    return " ".join(shlex.quote(a) for a in sys.argv)
+
+def _print_stage(msg: str) -> None:
+    # Single flushy print used by the server parser
+    print(f"CLI: {msg}", flush=True)
+
+class _CRToNL:
+    """Turn carriage-return redraws into newline lines so logs are persistent."""
+    def __init__(self, stream):
+        self._s = stream
+    def write(self, s: str):
+        s = s.replace('\r', '\n')
+        return self._s.write(s)
+    def flush(self):
+        return self._s.flush()
+
+@contextmanager
+def _patch_diffusers_progress():
+    """
+    Context manager to patch diffusers' tqdm to emit explicit progress messages
+    that the web server can parse.
+    """
+    import tqdm.auto as tqdm_auto
+    import sys
+    original_tqdm = tqdm_auto.tqdm
+
+    class DenoiseProgressTqdm(original_tqdm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._last_pct = -1
+        
+        def update(self, n=1):
+            result = super().update(n)
+            if self.total and self.desc and "denois" in self.desc.lower():
+                pct = int(self.n * 100 // self.total)
+                # Force update even if percentage is the same, but limit frequency
+                if pct != self._last_pct or (self.n % max(1, self.total // 20) == 0):
+                    print(f"CLI: denoise {pct}%", flush=True)
+                    sys.stdout.flush()  # Force flush
+                    self._last_pct = pct
+            return result
+
+    # Patch tqdm
+    tqdm_auto.tqdm = DenoiseProgressTqdm
+    
+    try:
+        yield
+    finally:
+        # Always restore original tqdm
+        tqdm_auto.tqdm = original_tqdm
+
+@contextmanager
+def _progress_heartbeat(label: str = "Denoising", interval: float = 2.0):
+    """
+    Emits 'CLI: <label>…' every `interval` seconds so the UI knows we're busy
+    during long, callback-less sections of the pipeline.
+    """
+    stop = Event()
+
+    def run():
+        while not stop.wait(interval):
+            print(".", end="", flush=True)
+
+    t = Thread(target=run, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join(timeout=0.2)
 
 def build_generate_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
@@ -49,6 +136,13 @@ def build_generate_parser(subparsers) -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Number of images to generate.",
+    )
+    parser.add_argument(
+        "--size",
+        type=str,
+        default="16:9",
+        choices=["1:1","16:9","9:16","4:3","3:4","3:2","2:3"],
+        help="Aspect ratio / resolution preset."
     )
     parser.add_argument(
         "--lora",
@@ -182,41 +276,45 @@ def get_custom_lora_path(lora_spec):
         print(f"Failed to load custom LoRA from {repo_id}: {e}")
         return None
 
-
 def merge_lora_from_safetensors(pipe, lora_path):
-    """Merge LoRA weights from safetensors file into the pipeline's transformer."""
-    import safetensors.torch
-    import torch
+    """
+    Merge LoRA weights from a .safetensors file into the pipeline's transformer,
+    with a tqdm progress bar.
 
+    - Computes an accurate total first (dry run), then merges with updates.
+    - Runs the matmul on the param's device (CUDA/MPS/CPU).
+    - Emits CLI stage beacons so your server logs/regex can react.
+    """
+    import safetensors.torch as st
+    import torch, re
+
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        # Fallback if tqdm is unavailable (no-op bar)
+        class _Dummy:
+            def __init__(self, *a, **k): pass
+            def update(self, *a, **k): pass
+            def close(self): pass
+        def tqdm(*a, **k): return _Dummy()
+
+    _print_stage("LoRA merge: loading weights…")
     with open(lora_path, "rb") as f:
-        lora_state_dict = safetensors.torch.load(f.read())
+        lora_state = st.load(f.read())
 
-    transformer = pipe.transformer
-    merged_count = 0
+    transformer = getattr(pipe, "transformer", None) or getattr(pipe, "unet", None)
+    if transformer is None:
+        raise RuntimeError("Could not locate pipeline.transformer or pipeline.unet to merge LoRA into")
 
-    lora_keys = list(lora_state_dict.keys())
+    keys = set(lora_state.keys())
+    uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
+    uses_diff = any(k.startswith("lora_unet_") for k in keys)
+    uses_ab  = any(".lora_A" in k or ".lora_B" in k for k in keys)
 
-    # Detect LoRA format
-    uses_dot_lora_format = any(
-        ".lora.down" in key or ".lora.up" in key for key in lora_keys
-    )
-    uses_diffusers_format = any(key.startswith("lora_unet_") for key in lora_keys)
-    uses_lora_ab_format = any(".lora_A" in key or ".lora_B" in key for key in lora_keys)
-
-    # Map diffusers-style keys to transformer parameter names
-    def convert_diffusers_key_to_transformer_key(diffusers_key):
-        """Convert diffusers-style LoRA keys to match transformer parameter names."""
-        # Remove lora_unet_ prefix
-        key = diffusers_key.replace("lora_unet_", "")
-
-        # Replace underscores with dots for the transformer_blocks part
-        # e.g., transformer_blocks_0 -> transformer_blocks.0
-        import re
-
+    def convert_diffusers_key_to_transformer_key(diff_key: str) -> str:
+        key = diff_key.replace("lora_unet_", "")
         key = re.sub(r"transformer_blocks_(\d+)", r"transformer_blocks.\1", key)
-
-        # Map the naming conventions
-        replacements = {
+        rep = {
             "_attn_add_k_proj": ".attn.add_k_proj",
             "_attn_add_q_proj": ".attn.add_q_proj",
             "_attn_add_v_proj": ".attn.add_v_proj",
@@ -230,154 +328,152 @@ def merge_lora_from_safetensors(pipe, lora_path):
             "_attn_to_v": ".attn.to_v",
             "_attn_to_out_0": ".attn.to_out.0",
         }
-
-        for old, new in replacements.items():
-            key = key.replace(old, new)
-
+        for a, b in rep.items():
+            key = key.replace(a, b)
         return key
 
-    if uses_lora_ab_format:
-        # Handle lora_A/lora_B format (e.g., diffusion_model.transformer_blocks.X.attn.Y.lora_A.weight)
-        for name, param in transformer.named_parameters():
-            base_name = (
-                name.replace(".weight", "") if name.endswith(".weight") else name
-            )
+    def _device_merge(param, lora_down, lora_up, scaling: float):
+        device = param.device
+        lora_up   = lora_up.to(device=device, dtype=torch.float32)
+        lora_down = lora_down.to(device=device, dtype=torch.float32)
+        delta_W = torch.matmul(lora_up, lora_down) * float(scaling)
+        param.data.add_(delta_W.to(dtype=param.data.dtype))
 
-            # Try to find matching LoRA weights with different possible prefixes
-            lora_a_key = None
-            lora_b_key = None
-
-            # Try with diffusion_model prefix
-            test_key_a = f"diffusion_model.{base_name}.lora_A.weight"
-            test_key_b = f"diffusion_model.{base_name}.lora_B.weight"
-
-            if test_key_a in lora_state_dict and test_key_b in lora_state_dict:
-                lora_a_key = test_key_a
-                lora_b_key = test_key_b
-            else:
-                # Try without prefix
-                test_key_a = f"{base_name}.lora_A.weight"
-                test_key_b = f"{base_name}.lora_B.weight"
-
-                if test_key_a in lora_state_dict and test_key_b in lora_state_dict:
-                    lora_a_key = test_key_a
-                    lora_b_key = test_key_b
-
-            if lora_a_key and lora_b_key:
-                lora_down = lora_state_dict[
-                    lora_a_key
-                ]  # lora_A is equivalent to lora_down
-                lora_up = lora_state_dict[lora_b_key]  # lora_B is equivalent to lora_up
-
-                # Default alpha to rank if not specified
-                lora_alpha = lora_down.shape[0]
-                rank = lora_down.shape[0]
-                scaling_factor = lora_alpha / rank
-
-                # Convert to float32 for computation
-                lora_up = lora_up.float()
-                lora_down = lora_down.float()
-
-                # Apply LoRA: weight = weight + scaling_factor * (up @ down)
-                delta_W = scaling_factor * torch.matmul(lora_up, lora_down)
-                param.data = (param.data + delta_W.to(param.device)).type_as(param.data)
-                merged_count += 1
-    elif uses_diffusers_format:
-        # Handle diffusers-style LoRA (like modern-anime)
-        for name, param in transformer.named_parameters():
-            base_name = (
-                name.replace(".weight", "") if name.endswith(".weight") else name
-            )
-
-            # Try different naming patterns
-            lora_down_key = None
-            lora_up_key = None
-            lora_alpha_key = None
-
-            # Check for exact match first
-            for key in lora_keys:
-                if key.startswith("lora_unet_"):
-                    converted_key = convert_diffusers_key_to_transformer_key(
-                        key.replace(".lora_down.weight", "")
-                        .replace(".lora_up.weight", "")
-                        .replace(".alpha", "")
-                    )
-                    if converted_key == base_name:
-                        if key.endswith(".lora_down.weight"):
-                            lora_down_key = key
-                        elif key.endswith(".lora_up.weight"):
-                            lora_up_key = key
-                        elif key.endswith(".alpha"):
-                            lora_alpha_key = key
-
-            if lora_down_key and lora_up_key:
-                lora_down = lora_state_dict[lora_down_key]
-                lora_up = lora_state_dict[lora_up_key]
-
-                # Get alpha value if it exists, otherwise use rank
-                if lora_alpha_key and lora_alpha_key in lora_state_dict:
-                    lora_alpha = float(lora_state_dict[lora_alpha_key])
+    # ---------- first pass: count how many params will actually be merged ----------
+    _print_stage("LoRA merge: scanning model…")
+    def count_merges() -> int:
+        cnt = 0
+        if uses_ab:
+            for name, _ in transformer.named_parameters():
+                base = name[:-7] if name.endswith(".weight") else name
+                a1, b1 = f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"
+                a2, b2 = f"{base}.lora_A.weight", f"{base}.lora_B.weight"
+                if (a1 in keys and b1 in keys) or (a2 in keys and b2 in keys):
+                    cnt += 1
+        elif uses_diff:
+            # Build a quick index of diffusers bases present in the LoRA
+            bases = {}
+            for k in keys:
+                if not k.startswith("lora_unet_"):
+                    continue
+                base = convert_diffusers_key_to_transformer_key(
+                    k.replace(".lora_down.weight","")
+                     .replace(".lora_up.weight","")
+                     .replace(".alpha","")
+                )
+                bases.setdefault(base, set()).add(k)
+            for name, _ in transformer.named_parameters():
+                base = name[:-7] if name.endswith(".weight") else name
+                ks = bases.get(base)
+                if not ks: 
+                    continue
+                # consider it a match if both down/up exist
+                has_down = any(k.endswith(".lora_down.weight") for k in ks)
+                has_up   = any(k.endswith(".lora_up.weight")   for k in ks)
+                if has_down and has_up:
+                    cnt += 1
+        else:
+            for name, _ in transformer.named_parameters():
+                base = name[:-7] if name.endswith(".weight") else name
+                if uses_dot:
+                    kd = f"transformer.{base}.lora.down.weight"
+                    ku = f"transformer.{base}.lora.up.weight"
+                    if kd not in keys:
+                        kd = f"{base}.lora.down.weight"
+                        ku = f"{base}.lora.up.weight"
                 else:
-                    lora_alpha = lora_down.shape[0]  # Use rank as default
+                    kd = f"{base}.lora_down.weight"
+                    ku = f"{base}.lora_up.weight"
+                if kd in keys and ku in keys:
+                    cnt += 1
+        return cnt
 
-                rank = lora_down.shape[0]
-                scaling_factor = lora_alpha / rank
+    total = count_merges()
+    pbar = tqdm(total=total or None, desc="Merging LoRA", leave=True, mininterval=0.2)
+    merged = 0
 
-                # Convert to float32 for computation
-                lora_up = lora_up.float()
-                lora_down = lora_down.float()
+    # ---------- second pass: do the actual merge with progress ----------
+    if uses_ab:
+        for name, param in transformer.named_parameters():
+            base = name[:-7] if name.endswith(".weight") else name
+            a1, b1 = f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"
+            a2, b2 = f"{base}.lora_A.weight", f"{base}.lora_B.weight"
+            if a1 in keys and b1 in keys:
+                lora_down, lora_up = lora_state[a1], lora_state[b1]
+            elif a2 in keys and b2 in keys:
+                lora_down, lora_up = lora_state[a2], lora_state[b2]
+            else:
+                continue
+            rank = lora_down.shape[0]
+            scaling = 1.0 if rank == 0 else (float(rank) / float(rank))  # alpha==rank default
+            _device_merge(param, lora_down, lora_up, scaling)
+            merged += 1
+            pbar.update(1)
 
-                # Apply LoRA: weight = weight + scaling_factor * (up @ down)
-                delta_W = scaling_factor * torch.matmul(lora_up, lora_down)
-                param.data = (param.data + delta_W.to(param.device)).type_as(param.data)
-                merged_count += 1
+    elif uses_diff:
+        # Index the keys for quick lookups
+        alpha_map = {}
+        down_map  = {}
+        up_map    = {}
+        for k in keys:
+            if not k.startswith("lora_unet_"):
+                continue
+            base = convert_diffusers_key_to_transformer_key(
+                k.replace(".lora_down.weight","")
+                 .replace(".lora_up.weight","")
+                 .replace(".alpha","")
+            )
+            if k.endswith(".lora_down.weight"):
+                down_map[base] = k
+            elif k.endswith(".lora_up.weight"):
+                up_map[base] = k
+            elif k.endswith(".alpha"):
+                alpha_map[base] = k
+
+        for name, param in transformer.named_parameters():
+            base = name[:-7] if name.endswith(".weight") else name
+            kd, ku = down_map.get(base), up_map.get(base)
+            if not kd or not ku:
+                continue
+            lora_down, lora_up = lora_state[kd], lora_state[ku]
+            if base in alpha_map:
+                lora_alpha = float(lora_state[alpha_map[base]])
+            else:
+                lora_alpha = lora_down.shape[0]  # default alpha = rank
+            rank = lora_down.shape[0]
+            scaling = (lora_alpha / rank) if rank else 1.0
+            _device_merge(param, lora_down, lora_up, scaling)
+            merged += 1
+            pbar.update(1)
+
     else:
-        # Handle original format LoRAs
         for name, param in transformer.named_parameters():
-            # Remove .weight suffix if present to get base parameter name
-            base_name = (
-                name.replace(".weight", "") if name.endswith(".weight") else name
-            )
-
-            if uses_dot_lora_format:
-                lora_down_key = f"transformer.{base_name}.lora.down.weight"
-                lora_up_key = f"transformer.{base_name}.lora.up.weight"
-                lora_alpha_key = f"transformer.{base_name}.alpha"
-
-                if lora_down_key not in lora_state_dict:
-                    lora_down_key = f"{base_name}.lora.down.weight"
-                    lora_up_key = f"{base_name}.lora.up.weight"
-                    lora_alpha_key = f"{base_name}.alpha"
+            base = name[:-7] if name.endswith(".weight") else name
+            if uses_dot:
+                kd = f"transformer.{base}.lora.down.weight"
+                ku = f"transformer.{base}.lora.up.weight"
+                ka = f"transformer.{base}.alpha"
+                if kd not in keys:
+                    kd = f"{base}.lora.down.weight"
+                    ku = f"{base}.lora.up.weight"
+                    ka = f"{base}.alpha"
             else:
-                lora_down_key = f"{base_name}.lora_down.weight"
-                lora_up_key = f"{base_name}.lora_up.weight"
-                lora_alpha_key = f"{base_name}.alpha"
+                kd = f"{base}.lora_down.weight"
+                ku = f"{base}.lora_up.weight"
+                ka = f"{base}.alpha"
 
-            if lora_down_key in lora_state_dict and lora_up_key in lora_state_dict:
-                lora_down = lora_state_dict[lora_down_key]
-                lora_up = lora_state_dict[lora_up_key]
-
-                # Get alpha value if it exists, otherwise use rank
-                if lora_alpha_key in lora_state_dict:
-                    lora_alpha = float(lora_state_dict[lora_alpha_key])
-                else:
-                    lora_alpha = lora_down.shape[0]  # Use rank as default
-
+            if kd in keys and ku in keys:
+                lora_down, lora_up = lora_state[kd], lora_state[ku]
+                lora_alpha = float(lora_state[ka]) if ka in keys else lora_down.shape[0]
                 rank = lora_down.shape[0]
-                scaling_factor = lora_alpha / rank
+                scaling = (lora_alpha / rank) if rank else 1.0
+                _device_merge(param, lora_down, lora_up, scaling)
+                merged += 1
+                pbar.update(1)
 
-                # Convert to float32 for computation
-                lora_up = lora_up.float()
-                lora_down = lora_down.float()
-
-                # Apply LoRA: weight = weight + scaling_factor * (up @ down)
-                delta_W = scaling_factor * torch.matmul(lora_up, lora_down)
-                param.data = (param.data + delta_W.to(param.device)).type_as(param.data)
-                merged_count += 1
-
-    print(f"Merged {merged_count} LoRA weights into the model")
+    pbar.close()
+    print(f"Merged {merged} LoRA weights into the model")
     return pipe
-
 
 def build_edit_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
@@ -442,11 +538,6 @@ def build_edit_parser(subparsers) -> argparse.ArgumentParser:
         action="store_true",
         help="LEGO Batman photobombs your image! 🦇",
     )
-    parser.add_argument(
-        "--no-mmap",
-        action="store_true",
-        help="Disable memory-mapped loading (fix ROCm/Strix Halo issues).",
-    )
     return parser
 
 
@@ -472,15 +563,21 @@ def create_generator(device, seed):
     generator_device = "cpu" if device == "mps" else device
     return torch.Generator(device=generator_device).manual_seed(seed)
 
-
 def generate_image(args) -> None:
     from diffusers import DiffusionPipeline
 
     model_name = "Qwen/Qwen-Image"
     device, torch_dtype = get_device_and_dtype()
 
+    _print_stage(f"Loading base pipeline: {model_name} (dtype={torch_dtype})")
     pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
     pipe = pipe.to(device)
+    pipe.set_progress_bar_config(
+        disable=False,
+        leave=True,              # keep the final bar
+        miniters=1
+    )
+    _print_stage("Pipeline ready on device")
 
     # Apply custom LoRA if specified
     if args.lora:
@@ -497,7 +594,6 @@ def generate_image(args) -> None:
         lora_path = get_lora_path(ultra_fast=True)
         if lora_path:
             pipe = merge_lora_from_safetensors(pipe, lora_path)
-            # Use fixed 4 steps for Ultra Lightning mode
             num_steps = 4
             cfg_scale = 1.0
             print(f"Ultra-fast mode enabled: {num_steps} steps, CFG scale {cfg_scale}")
@@ -511,7 +607,6 @@ def generate_image(args) -> None:
         lora_path = get_lora_path(ultra_fast=False)
         if lora_path:
             pipe = merge_lora_from_safetensors(pipe, lora_path)
-            # Use fixed 8 steps for Lightning mode
             num_steps = 8
             cfg_scale = 1.0
             print(f"Fast mode enabled: {num_steps} steps, CFG scale {cfg_scale}")
@@ -527,7 +622,6 @@ def generate_image(args) -> None:
     # LEGO Batman photobomb mode!
     if args.batman:
         import random
-
         batman_additions = [
             ", with a tiny LEGO Batman minifigure photobombing in the corner doing a dramatic cape pose",
             ", featuring a small LEGO Batman minifigure sneaking into the frame from the side",
@@ -542,10 +636,7 @@ def generate_image(args) -> None:
         ]
         print("\n🦇 BATMAN MODE ACTIVATED: Adding surprise LEGO Batman photobomb!")
 
-    negative_prompt = (
-        " "  # using an empty string if you do not have specific concept to remove
-    )
-
+    negative_prompt = " "
     aspect_ratios = {
         "1:1": (1328, 1328),
         "16:9": (1664, 928),
@@ -555,52 +646,69 @@ def generate_image(args) -> None:
         "3:2": (1584, 1056),
         "2:3": (1056, 1584),
     }
-
-    width, height = aspect_ratios["16:9"]
+    sel = getattr(args, "size", "16:9")
+    width, height = aspect_ratios.get(sel, aspect_ratios["16:9"])
 
     # Ensure we generate at least one image
     num_images = max(1, int(args.num_images))
+    _print_stage(f"Generation config: steps={num_steps}, cfg={cfg_scale}, size={sel}, images={num_images}")
+
+    _print_stage(f"{num_steps} steps, CFG scale {cfg_scale}")
 
     # Shared timestamp for this generation batch
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
     saved_paths = []
 
     for image_index in range(num_images):
         if args.seed is not None:
-            # Deterministic: increment seed per image starting from the provided seed
             per_image_seed = int(args.seed) + image_index
         else:
-            # Random seed for each image when no seed is provided
-            # Use 63-bit to keep it positive and well within torch's expected range
             per_image_seed = secrets.randbits(63)
 
-        # Choose a random Batman prompt for each image when in Batman mode
         current_prompt = args.prompt
         if args.batman:
+            import random
             batman_action = random.choice(batman_additions)
             current_prompt = current_prompt + batman_action
             if num_images > 1:
-                print(
-                    f"  Image {image_index + 1}: Using Batman variant - {batman_action[2:50]}..."
-                )
+                print(f"  Image {image_index + 1}: Using Batman variant - {batman_action[2:50]}...")
 
         generator = create_generator(device, per_image_seed)
-        image = pipe(
-            prompt=current_prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            num_inference_steps=num_steps,
-            true_cfg_scale=cfg_scale,
-            generator=generator,
-        ).images[0]
+        _print_stage(f"Invoking pipeline (image {image_index+1}/{num_images})")
+        _print_stage("Denoising started")
+        with _patch_diffusers_progress():
+            image = pipe(
+                prompt=current_prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=num_steps,
+                true_cfg_scale=cfg_scale,
+                generator=generator,
+            ).images[0]
+        _print_stage("Denoising finished")
 
-        # Save with timestamp to avoid overwriting previous generations
+        # Save with timestamp to avoid overwriting previous generations + PNG metadata
+        output_dir = get_output_dir()
         suffix = f"-{image_index+1}" if num_images > 1 else ""
-        output_filename = f"image-{timestamp}{suffix}.png"
-        image.save(output_filename)
+        output_filename = str(output_dir / f"image-{timestamp}{suffix}.png")
+
+        meta = PngInfo()
+        meta.add_text("qim:command", _full_command_line())
+        meta.add_text("qim:prompt", current_prompt)
+        meta.add_text("qim:negative_prompt", negative_prompt)
+        meta.add_text("qim:steps", str(num_steps))
+        meta.add_text("qim:cfg_scale", str(cfg_scale))
+        meta.add_text("qim:mode", "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"))
+        meta.add_text("qim:seed", str(per_image_seed))
+        meta.add_text("qim:timestamp", timestamp)
+        meta.add_text("qim:model", "Qwen/Qwen-Image")
+        meta.add_text("qim:size", f"{width}x{height}")
+
+        _print_stage(f"Saving image ({image_index+1}/{num_images}): {output_filename}")
+        image.save(output_filename, pnginfo=meta)
         saved_paths.append(os.path.abspath(output_filename))
+
 
     # Print full path(s) of saved image(s)
     if len(saved_paths) == 1:
@@ -610,7 +718,6 @@ def generate_image(args) -> None:
         for path in saved_paths:
             print(f"- {path}")
 
-
 def edit_image(args) -> None:
     import torch
     from diffusers import QwenImageEditPipeline
@@ -618,13 +725,17 @@ def edit_image(args) -> None:
 
     device, torch_dtype = get_device_and_dtype()
 
-    # Load the image editing pipeline
     print("Loading Qwen-Image-Edit model for image editing...")
     pipeline = QwenImageEditPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit", torch_dtype=torch_dtype
     )
     pipeline = pipeline.to(device)
-    pipeline.set_progress_bar_config(disable=None)
+    pipeline.set_progress_bar_config(
+        disable=False,
+        leave=True,              # keep the final bar
+        miniters=1
+    )
+    _print_stage("Edit pipeline ready on device")
 
     # Apply custom LoRA if specified
     if args.lora:
@@ -640,9 +751,7 @@ def edit_image(args) -> None:
         print("Loading Lightning LoRA v1.0 for ultra-fast editing...")
         lora_path = get_lora_path(ultra_fast=True)
         if lora_path:
-            # Use manual LoRA merging for edit pipeline
             pipeline = merge_lora_from_safetensors(pipeline, lora_path)
-            # Use fixed 4 steps for Ultra Lightning mode
             num_steps = 4
             cfg_scale = 1.0
             print(f"Ultra-fast mode enabled: {num_steps} steps, CFG scale {cfg_scale}")
@@ -655,9 +764,7 @@ def edit_image(args) -> None:
         print("Loading Lightning LoRA v1.1 for fast editing...")
         lora_path = get_lora_path(ultra_fast=False)
         if lora_path:
-            # Use manual LoRA merging for edit pipeline
             pipeline = merge_lora_from_safetensors(pipeline, lora_path)
-            # Use fixed 8 steps for Lightning mode
             num_steps = 8
             cfg_scale = 1.0
             print(f"Fast mode enabled: {num_steps} steps, CFG scale {cfg_scale}")
@@ -686,7 +793,6 @@ def edit_image(args) -> None:
     edit_prompt = args.prompt
     if args.batman:
         import random
-
         batman_edits = [
             " Also add a tiny LEGO Batman minifigure photobombing somewhere unexpected.",
             " Include a small LEGO Batman figure sneaking into the scene.",
@@ -703,12 +809,13 @@ def edit_image(args) -> None:
         edit_prompt = args.prompt + batman_edit
         print("\n🦇 BATMAN MODE ACTIVATED: LEGO Batman will photobomb this edit!")
 
-    # Perform image editing
     print(f"Editing image with prompt: {edit_prompt}")
     print(f"Using {num_steps} inference steps...")
 
-    # QwenImageEditPipeline for image editing
-    with torch.inference_mode():
+    _print_stage(f"Editing config: steps={num_steps}, cfg={cfg_scale}")
+    _print_stage("Invoking edit pipeline")
+    _print_stage("Denoising started")
+    with _patch_diffusers_progress():
         output = pipeline(
             image=image,
             prompt=edit_prompt,
@@ -718,17 +825,38 @@ def edit_image(args) -> None:
             guidance_scale=cfg_scale,
         )
         edited_image = output.images[0]
+    _print_stage("Denoising finished")
 
-    # Save the edited image
     if args.output:
-        output_filename = args.output
+        # If user specified output, respect it but ensure directory exists
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            # Relative path, put it in our default directory
+            output_dir = get_output_dir()
+            output_filename = str(output_dir / args.output)
+        else:
+            # Absolute path, use as-is but ensure parent dir exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_filename = str(output_path)
     else:
+        # Default to our directory
+        output_dir = get_output_dir()
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        output_filename = f"edited-{timestamp}.png"
+        output_filename = str(output_dir / f"edited-{timestamp}.png")
 
-    edited_image.save(output_filename)
+    meta = PngInfo()
+    meta.add_text("qim:command", _full_command_line())
+    meta.add_text("qim:prompt", edit_prompt)
+    meta.add_text("qim:negative_prompt", " ")
+    meta.add_text("qim:steps", str(num_steps))
+    meta.add_text("qim:cfg_scale", str(cfg_scale))
+    meta.add_text("qim:mode", "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"))
+    meta.add_text("qim:seed", str(seed))
+    meta.add_text("qim:timestamp", timestamp)
+    meta.add_text("qim:model", "Qwen/Qwen-Image-Edit")
+
+    edited_image.save(output_filename, pnginfo=meta)
     print(f"\nEdited image saved to: {os.path.abspath(output_filename)}")
-
 
 def main() -> None:
     try:
@@ -742,6 +870,11 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    parser.add_argument(
+        "--no-mmap",
+        action="store_true",
+        help="Disable memory-mapped loading (fix ROCm/Strix Halo issues).",
+    )
     parser.add_argument(
         "--version",
         action="version",
@@ -757,11 +890,15 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if getattr(args, "no_mmap", False):
+    if args.no_mmap:
         import safetensors.torch as _st
-        def _no_mmap_load_file(filename, device=None):
+
+        def _no_mmap_load_file(filename, device=None, **kwargs):
             with open(filename, "rb") as f:
-                return _st.load(f.read(), device=device)
+                data = f.read()
+            state_dict = _st.load(data)  # no mmap, no device kw
+            return state_dict
+
         _st.load_file = _no_mmap_load_file
         print("⚠️ Memory-mapped loading disabled")
 
