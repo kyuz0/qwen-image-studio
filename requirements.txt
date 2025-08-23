@@ -12,6 +12,7 @@ Pillow>=9.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 starlette>=0.37.0
+python-multipart
 
 # Optional utilities
 tqdm>=4.65.0
