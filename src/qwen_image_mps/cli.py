@@ -12,44 +12,6 @@ from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 
-def get_model_dir() -> Path:
-    p = Path.home() / ".qwen-image-studio" / "models"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-def _fp8_file(is_edit: bool) -> Path:
-    name = "qwen_image_edit_fp8_e4m3fn.safetensors" if is_edit else "qwen_image_fp8_e4m3fn.safetensors"
-    return get_model_dir() / name
-
-def load_fp8_weights(pipe, torch_dtype, is_edit: bool):
-    import safetensors.torch as st
-    import torch
-    fp = _fp8_file(is_edit)
-    if not fp.exists():
-        raise SystemExit(f"FP8 model not found: {fp}\nRun: cli download {'qwen-image-edit-fp8' if is_edit else 'qwen-image-fp8'}")
-    state = st.load_file(str(fp))
-    target = getattr(pipe, "transformer", None) or getattr(pipe, "unet", None)
-    if target is None:
-        raise SystemExit("Cannot locate transformer/unet to load FP8 weights into.")
-    def _load(sd):
-        sd = {k: (v.to(dtype=torch_dtype) if isinstance(v, torch.Tensor) else v) for k, v in sd.items()}
-        r = target.load_state_dict(sd, strict=False)
-        missing = getattr(r, "missing_keys", [])
-        unexpected = getattr(r, "unexpected_keys", [])
-        return missing, unexpected
-    missing, unexpected = _load(state)
-    if missing and all(k.startswith("diffusion_model.") for k in state.keys()):
-        stripped = {k.replace("diffusion_model.", "", 1): v for k, v in state.items()}
-        missing, unexpected = _load(stripped)
-    print(f"FP8 weights loaded from {fp} (missing={len(missing)}, unexpected={len(unexpected)})")
-    return pipe
-
-def get_output_dir():
-    """Get the default output directory for images."""
-    output_dir = Path.home() / ".qwen-image-studio"
-    output_dir.mkdir(exist_ok=True)
-    return output_dir
-
 def _full_command_line() -> str:
     return " ".join(shlex.quote(a) for a in sys.argv)
 
@@ -141,11 +103,6 @@ def build_generate_parser(subparsers) -> argparse.ArgumentParser:
         type=int,
         default=50,
         help="Number of inference steps for normal generation.",
-    )
-    parser.add_argument(
-        "-fp8","--fp8",
-        action="store_true",
-        help="Use local FP8 weights instead of full-precision model."
     )
     parser.add_argument(
         "-f",
@@ -540,11 +497,6 @@ def build_edit_parser(subparsers) -> argparse.ArgumentParser:
         help="Number of inference steps for normal editing.",
     )
     parser.add_argument(
-        "-fp8","--fp8",
-        action="store_true",
-        help="Use local FP8 weights instead of full-precision model."
-    )
-    parser.add_argument(
         "-f",
         "--fast",
         action="store_true",
@@ -593,7 +545,7 @@ def build_download_parser(subparsers) -> argparse.ArgumentParser:
         nargs="?",
         default="list",
         help="Comma-separated list, or 'all', or 'list'. "
-             "Options: qwen-image, qwen-image-edit, lightning-lora-8, lightning-lora-4, qwen-image-fp8, qwen-image-edit-fp8",
+             "Options: qwen-image, qwen-image-edit, lightning-lora-8, lightning-lora-4",
     )
     return p
 
@@ -605,8 +557,6 @@ def download_models(args) -> None:
         "qwen-image-edit": {"kind":"snapshot","repo":"Qwen/Qwen-Image-Edit"},
         "lightning-lora-8": {"kind":"file","repo":"lightx2v/Qwen-Image-Lightning","file":"Qwen-Image-Lightning-8steps-V1.1.safetensors"},
         "lightning-lora-4": {"kind":"file","repo":"lightx2v/Qwen-Image-Lightning","file":"Qwen-Image-Lightning-4steps-V1.0-bf16.safetensors"},
-        "qwen-image-fp8": {"kind":"fp8","repo":"Comfy-Org/Qwen-Image_ComfyUI","file":"split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors"},
-        "qwen-image-edit-fp8": {"kind":"fp8","repo":"Comfy-Org/Qwen-Image-Edit_ComfyUI","file":"split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"},
     }
     if args.targets == "list":
         print("Available:", ", ".join(catalog.keys()))
@@ -623,12 +573,6 @@ def download_models(args) -> None:
         elif item["kind"] == "file":
             path = hf_hub_download(repo_id=item["repo"], filename=item["file"], repo_type="model")
             print(f"{t}: cached file -> {path}")
-        else:  # fp8 -> place in ~/.qwen-image-studio/models
-            cached = hf_hub_download(repo_id=item["repo"], filename=item["file"], repo_type="model")
-            dest = get_model_dir() / Path(item["file"]).name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            copy2(cached, dest)
-            print(f"{t}: placed -> {dest}")
 
 def get_device_and_dtype():
     """Get the optimal device and dtype for the current system."""
@@ -667,10 +611,6 @@ def generate_image(args) -> None:
         miniters=1
     )
     _print_stage("Pipeline ready on device")
-
-    if args.fp8:
-        _print_stage("Loading FP8 weights…")
-        pipe = load_fp8_weights(pipe, torch_dtype, is_edit=False)
 
     # Apply custom LoRA if specified
     if args.lora:
@@ -829,10 +769,6 @@ def edit_image(args) -> None:
         miniters=1
     )
     _print_stage("Edit pipeline ready on device")
-
-    if args.fp8:
-        _print_stage("Loading FP8 weights…")
-        pipeline = load_fp8_weights(pipeline, torch_dtype, is_edit=True)
 
     # Apply custom LoRA if specified
     if args.lora:
