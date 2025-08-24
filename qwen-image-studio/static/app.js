@@ -484,9 +484,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function syncStepsDisabled() {
         const fast = $('#imageForm input[name="fast"]').checked;
         const ultra = $('#imageForm input[name="ultra_fast"]').checked;
-        const disabled = fast || ultra;
-        stepsInput.disabled = disabled;
-        stepsInput.title = disabled ? 'Ignored in Fast/Ultra mode' : '';
+        stepsInput.disabled = (fast || ultra);
+        stepsInput.title = (fast || ultra) ? 'Ignored in Fast/Ultra mode' : '';
     }
     $$('#imageForm input[name="fast"], #imageForm input[name="ultra_fast"]').forEach(cb => {
         cb.addEventListener('change', syncStepsDisabled);
