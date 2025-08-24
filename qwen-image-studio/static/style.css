@@ -694,7 +694,7 @@ select {
 }
 
 .tab-button:hover {
-    color: var(--pico-color);
+    filter: brightness(0.8);
 }
 
 .tab-button.active {
