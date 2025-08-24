@@ -238,19 +238,19 @@ function updateQueue() {
                     ${escapeHTML(job.params?.prompt || '')}
                 </div>
                 ${(() => {
-                    const p = job.params || {};
-                    const tags = [];
-                    if (p.ultra_fast === true || p.ultra_fast === "true") {
-                        tags.push("Ultra Fast (4 steps)");
-                    } else if (p.fast === true || p.fast === "true") {
-                        tags.push("Fast (8 steps)");
-                    } else if (p.steps) {
-                        tags.push(`${p.steps} steps`);
-                    }                 
-                    if (p.seed) tags.push(`Seed ${p.seed}`);
-                    if (job.type === "generate" && p.size) tags.push(p.size);
-                    return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
-                })()}
+                const p = job.params || {};
+                const tags = [];
+                if (p.ultra_fast === true || p.ultra_fast === "true") {
+                    tags.push("Ultra Fast (4 steps)");
+                } else if (p.fast === true || p.fast === "true") {
+                    tags.push("Fast (8 steps)");
+                } else if (p.steps) {
+                    tags.push(`${p.steps} steps`);
+                }
+                if (p.seed) tags.push(`Seed ${p.seed}`);
+                if (job.type === "generate" && p.size) tags.push(p.size);
+                return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
+            })()}
 
                  <span class="status-pill ${job.status}">
                     ${job.status === 'processing' ? 'Generating'
@@ -412,7 +412,7 @@ async function submitForm(e) {
     fd.append('prompt', prompt);
     if (!(fast || ultra_fast)) {
         fd.append('steps', steps);
-    }    
+    }
     fd.append('fast', String(fast));
     fd.append('ultra_fast', String(ultra_fast));
     fd.append('batman', String(batman));
@@ -423,7 +423,12 @@ async function submitForm(e) {
     const endpoint = currentMode === 'generate' ? '/api/generate' : '/api/edit';
     if (currentMode === 'edit') {
         const imageFile = $('#imageInput').files?.[0];
-        if (!imageFile) { alert('Please upload an image for editing'); return; }
+        if (!imageFile) {
+            alert('Please upload an image for editing');
+            isSubmitting = false;
+            updateSubmitButton();
+            return;
+        }
         fd.append('image', imageFile);
     }
 
