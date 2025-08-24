@@ -275,16 +275,19 @@ function updateQueue() {
                 ${stagesHTML}
             </div>
             
-            <div class="job-thumbnail ${getThumbnailClass(job)}" onclick="${getThumbnailClick(job)}">
+            <div class="job-thumbs">
                 ${job.type === 'edit' && job.params?.image_path
-                ? `<div class="job-source">
-                            <img src="/api/file?path=${encodeURIComponent(job.params.image_path)}" alt="Source image"/>
-                            <div class="arrow-down">↓</div>
-                        </div>`
+                ? `<div class="job-thumbnail source" onclick="openImage('/api/file?path=${encodeURIComponent(job.params.image_path)}')">
+                        <img src="/api/file?path=${encodeURIComponent(job.params.image_path)}" alt="Source image"/>
+                        </div>
+                        <div class="arrow-down">↓</div>`
                 : ''
             }
-                ${getThumbnailContent(job)}
+                <div class="job-thumbnail ${getThumbnailClass(job)}" onclick="${getThumbnailClick(job)}">
+                    ${getThumbnailContent(job)}
+                </div>
             </div>
+
         </div>
 
         ${shouldShowError(job) ? `<p class="job-error">${escapeHTML(job.error)}</p>` : ''}

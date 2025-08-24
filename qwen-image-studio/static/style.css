@@ -692,6 +692,13 @@ textarea, input[type="text"], input[type="number"], select{
   color: var(--pico-muted-color);
 }
 
+.job-thumbs{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:4px;
+}
+
 .job-source {
   display: flex;
   flex-direction: column;
