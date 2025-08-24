@@ -126,7 +126,12 @@
             </section>
 
             <section id="jobQueue" class="jobs-card hidden">
-                <h3>Active Jobs</h3>
+                <div class="jobs-header">
+                    <h3>Jobs</h3>
+                    <button id="cancelAllBtn" class="secondary small" aria-label="Cancel all active jobs">
+                        ❌ Cancel All
+                    </button>
+                </div>
                 <div id="jobList"></div>
             </section>
         </main>

@@ -20,6 +20,28 @@ function outputThumb(absPath) {
   </figure>`;
 }
 
+function cancelAllJobs() {
+    const actives = Array.from(jobs.values()).filter(j => j.status === 'queued' || j.status === 'processing');
+    if (actives.length === 0) return;
+    if (!confirm(`Cancel ${actives.length} active job(s)?`)) return;
+
+    const btn = $('#cancelAllBtn'); if (btn) btn.disabled = true;
+
+    // locally flip to "cancelling" and reuse existing single-cancel path
+    for (const j of actives) {
+        j.status = 'cancelling';
+        j.stage = 'cancelling';
+        jobs.set(j.id, j);
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'cancel_job', job_id: j.id }));
+        }
+    }
+    updateUI();
+
+    // re-enable button shortly (WS updates will finalize states)
+    setTimeout(() => { if (btn) btn.disabled = false; }, 1500);
+}
+
 function shouldShowError(job) {
     // Only show error if job has permanently failed (no more retries)
     // If status is 'failed', it means all retries are exhausted
@@ -488,6 +510,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // wire tabs
     $$('.tab-button').forEach(b => b.addEventListener('click', () => applyMode(b.dataset.mode)));
+
+    $('#cancelAllBtn')?.addEventListener('click', cancelAllJobs);
 
     // mutually exclusive fast / ultra
     $$('#imageForm input[name="fast"], #imageForm input[name="ultra_fast"]').forEach(cb => {
