@@ -194,7 +194,7 @@ textarea {
 
 .jobs-header{
   display:flex;
-  align-items:flex-end; /* bottom-align with "Jobs" */
+  align-items:baseline; 
   gap:.75rem;
   margin:.75rem 0 .75rem;
 }
