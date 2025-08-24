@@ -276,6 +276,13 @@ function updateQueue() {
             </div>
             
             <div class="job-thumbnail ${getThumbnailClass(job)}" onclick="${getThumbnailClick(job)}">
+                ${job.type === 'edit' && job.params?.image_path
+                ? `<div class="job-source">
+                            <img src="/api/file?path=${encodeURIComponent(job.params.image_path)}" alt="Source image"/>
+                            <div class="arrow-down">↓</div>
+                        </div>`
+                : ''
+            }
                 ${getThumbnailContent(job)}
             </div>
         </div>
