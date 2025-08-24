@@ -129,7 +129,10 @@ def build_command(job: dict) -> List[str]:
         if p.get("size"):
             cmd += ["--size", p["size"]]
     else:
-        cmd += ["edit", "-i", p["image_path"], "-p", p["prompt"]]
+        img_arg = p["image_path"]
+        if not Path(img_arg).is_absolute():
+            img_arg = str((STATE_DIR / img_arg).resolve())
+        cmd += ["edit", "-i", img_arg, "-p", p["prompt"]]
         if p.get("steps"):
             cmd += ["--steps", str(p["steps"])]
         if p.get("seed") is not None:
@@ -615,17 +618,22 @@ async def api_delete_job(job_id: str):
 
 @app.get("/api/file")
 async def api_file(path: str):
-    p = Path(path)
-    if not p.is_absolute():
-        p = STATE_DIR / p  # allow relative paths like "jobs/<id>/file.png"
-    try:
-        p = p.resolve(strict=True)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Not found")
+    # Reject absolute inputs outright
+    if Path(path).is_absolute():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     base = STATE_DIR.resolve()
+    p = (base / path).resolve()
+
+    # Enforce sandbox
     if base not in p.parents and p != base:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
     return FileResponse(str(p))
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -768,7 +776,7 @@ async def api_edit(
         shutil.move(image_path, dest)
     except Exception:
         shutil.copy2(image_path, dest)
-    job["params"]["image_path"] = str(dest.resolve())
+    job["params"]["image_path"] = f"jobs/{job['id']}/input{ext}"
     save_jobs()
 
     await hub.broadcast({"type": "job_update", "job": job})
