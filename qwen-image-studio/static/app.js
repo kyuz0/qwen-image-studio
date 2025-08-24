@@ -498,7 +498,7 @@ function renderAllJobs(visible) {
                 if (job.type === "generate" && p.size) tags.push(p.size);
                 return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
             })()}
-                       <br/>
+                       
                         <small class="muted job-time">${job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
                 : job.status === 'failed' ? `Failed after ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
                     : job.status === 'cancelled' ? `Stopped after ${formatDuration(elapsed)}`
