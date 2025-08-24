@@ -5,8 +5,10 @@ const jobs = new Map();
 const actionLocks = new Set();
 const expandedPrompts = new Set();
 let jobSearchQuery = '';
-let jobPage = 1;
-const JOBS_PER_PAGE = 10;
+const JOBS_BATCH = 20;
+let jobsVisible = JOBS_BATCH;
+let _observerInit = false;
+
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -225,20 +227,17 @@ function updateQueue() {
         activeJobs = activeJobs.filter(j => (j.params?.prompt || '').toLowerCase().includes(q));
     }
 
-    // pagination
     const total = activeJobs.length;
-    const totalPages = Math.max(1, Math.ceil(total / JOBS_PER_PAGE));
-    jobPage = Math.min(Math.max(1, jobPage), totalPages);
-    const start = (jobPage - 1) * JOBS_PER_PAGE;
-    const pageSlice = activeJobs.slice(start, start + JOBS_PER_PAGE);
-
-    if (total === 0) { queueSection.classList.add('hidden'); return; }
+    if (total === 0) { queueSection.classList.add('hidden'); jobList.innerHTML = ''; return; }
     queueSection.classList.remove('hidden');
 
+    jobsVisible = Math.min(jobsVisible, total);
+    const visible = activeJobs.slice(0, jobsVisible);
+    window.__filteredJobsCount = total;
 
     const order = ['model_loading', 'pipeline_loading', 'lora_loading', 'generation'];
 
-    jobList.innerHTML = pageSlice.map(job => {
+    jobList.innerHTML = visible.map(job => {
         const isTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
         const startTs = job.started_at ? new Date(job.started_at).getTime() : null;
         const endTs = isTerminal
@@ -264,16 +263,6 @@ function updateQueue() {
           </div>
         </div>
       `).join('') : '';
-
-        // render pager
-        const pager = $('#jobPager');
-        pager.innerHTML = `
-            <button type="button" id="jobPrev" class="secondary small" ${jobPage <= 1 ? 'disabled' : ''}>◀ Prev</button>
-            <span style="margin:0 .5rem;">Page ${jobPage} / ${Math.max(1, Math.ceil(total / JOBS_PER_PAGE))} · ${total} item(s)</span>
-            <button type="button" id="jobNext" class="secondary small" ${jobPage >= Math.max(1, Math.ceil(total / JOBS_PER_PAGE)) ? 'disabled' : ''}>Next ▶</button>
-            `;
-        $('#jobPrev')?.addEventListener('click', () => { if (jobPage > 1) { jobPage--; updateQueue(); } });
-        $('#jobNext')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(total / JOBS_PER_PAGE)); if (jobPage < max) { jobPage++; updateQueue(); } });
 
         return `
     <article class="job-card">
@@ -564,13 +553,28 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#themeToggle').addEventListener('click', toggleTheme);
 
     $('#imageForm').addEventListener('submit', submitForm);
+
     const searchEl = $('#jobSearch');
     if (searchEl) {
         searchEl.addEventListener('input', (e) => {
             jobSearchQuery = e.target.value || '';
-            jobPage = 1;
+            jobsVisible = JOBS_BATCH;
             updateQueue();
         });
     }
 
+    const sentinel = $('#jobInfiniteSentinel');
+    if (sentinel && !_observerInit) {
+        const io = new IntersectionObserver((entries) => {
+            if (entries.some(e => e.isIntersecting)) {
+                const total = window.__filteredJobsCount ?? 0;
+                if (jobsVisible < total) {
+                    jobsVisible += JOBS_BATCH;
+                    updateQueue();
+                }
+            }
+        }, { root: null, rootMargin: '200px', threshold: 0 });
+        io.observe(sentinel);
+        _observerInit = true;
+    }
 });
