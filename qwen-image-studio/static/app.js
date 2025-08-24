@@ -436,8 +436,11 @@ async function submitForm(e) {
         const res = await fetch(endpoint, { method: 'POST', body: fd });
         if (!res.ok) throw new Error('Submission failed');
         await res.json();
-        e.target.reset();
-        $('#uploadPreview').classList.add('hidden');
+        // Do NOT reset form — keep prompt, checkboxes, etc.
+        // Only clear upload preview if in generate mode
+        if (currentMode === 'generate') {
+            $('#uploadPreview').classList.add('hidden');
+        }
     } catch (err) {
         alert('Error: ' + err.message);
     } finally {
