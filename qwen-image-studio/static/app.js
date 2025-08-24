@@ -302,7 +302,7 @@ function jobHasChanged(current, previous) {
     if (current.status === 'processing' || current.status === 'queued') {
         return true;
     }
-    
+
     // Check the fields that matter for display
     return (
         current.status !== previous.status ||
@@ -480,6 +480,14 @@ function renderAllJobs(visible) {
                             <span class="job-prompt-text">${escapeHTML(job.params?.prompt || '')}</span>
                             <button type="button" class="copyPromptBtn" data-id="${job.id}" title="Copy">📋</button>
                         </div>
+                         <span class="status-pill ${job.status}">${job.status === 'processing' ? 'Generating'
+                : job.status === 'queued' ? 'Queued'
+                    : job.status === 'cancelling' ? 'Cancelling'
+                        : job.status === 'cancelled' ? 'Cancelled'
+                            : job.status === 'failed' ? 'Failed'
+                                : job.status === 'completed' ? 'Completed'
+                                    : escapeHTML(job.status || '')
+            }</span>
                         ${(() => {
                 const p = job.params || {};
                 const tags = [];
@@ -490,14 +498,7 @@ function renderAllJobs(visible) {
                 if (job.type === "generate" && p.size) tags.push(p.size);
                 return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
             })()}
-                        <span class="status-pill ${job.status}">${job.status === 'processing' ? 'Generating'
-                : job.status === 'queued' ? 'Queued'
-                    : job.status === 'cancelling' ? 'Cancelling'
-                        : job.status === 'cancelled' ? 'Cancelled'
-                            : job.status === 'failed' ? 'Failed'
-                                : job.status === 'completed' ? 'Completed'
-                                    : escapeHTML(job.status || '')
-            }</span><br/>
+                       <br/>
                         <small class="muted job-time">${job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
                 : job.status === 'failed' ? `Failed after ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
                     : job.status === 'cancelled' ? `Stopped after ${formatDuration(elapsed)}`
