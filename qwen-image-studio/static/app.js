@@ -298,6 +298,11 @@ function updateQueue() {
 }
 
 function jobHasChanged(current, previous) {
+    // Always update running jobs (for timer)
+    if (current.status === 'processing' || current.status === 'queued') {
+        return true;
+    }
+    
     // Check the fields that matter for display
     return (
         current.status !== previous.status ||
