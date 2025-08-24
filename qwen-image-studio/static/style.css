@@ -23,8 +23,9 @@
 
 .brand-text h1 {
     margin: 0;
-    font-size: 1.35rem;
-    font-weight: 700
+    font-size: 1.45rem;
+    font-weight: 700;
+    font-style: italic;
 }
 
 .muted {
@@ -203,6 +204,16 @@ textarea {
     line-height: 1.2;
 }
 
+/* slimmer search to align with button */
+.jobs-header #jobSearch {
+    height: 36px;
+    padding: .3rem .9rem;
+    font-size: .95rem;
+    line-height: 1;
+    border-radius: 20px;
+    box-sizing: border-box;
+}
+
 button.small {
     padding: .35rem .7rem;
     font-size: .9rem;
@@ -212,7 +223,6 @@ button.small {
     display: inline-flex;
     align-items: center;
     gap: .4rem;
-    border-color: #c62828;
 }
 
 #cancelAllBtn .cancel-icon {
@@ -807,4 +817,49 @@ select {
 .job-thumbnail.source,
 .job-thumbnail.source img {
     cursor: pointer;
+}
+
+.model-link-wrap {
+    margin: .25rem 0 1rem;
+}
+
+.model-link {
+    font-size: .9em;
+    color: var(--pico-muted-color);
+    text-decoration: none;
+}
+
+.model-link:hover {
+    text-decoration: underline;
+    color: var(--pico-color);
+}
+
+:root {
+    /* Set this to match your Qwen logo color */
+    --brand-color: #9069e3;
+}
+
+.headerbar .brand {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+}
+
+.logo-img {
+    height: 32px;
+    width: auto;
+    display: block;
+}
+
+.app-title {
+    margin: 0;
+    font-family: "Manrope", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+    font-weight: 700;
+    letter-spacing: .2px;
+    color: var(--brand-color);
+}
+
+/* keep identical brand color in both themes */
+html[data-theme="dark"] .app-title {
+    color: var(--brand-color);
 }

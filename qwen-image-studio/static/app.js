@@ -186,7 +186,17 @@ function applyMode(mode) {
     const resField = document.getElementById('resolution-field');
     if (resField) resField.style.display = (mode === 'generate') ? '' : 'none';
 
-    // Update submit button text and icon
+    const genLink = $('#generateModelLink');
+    const editLink = $('#editModelLink');
+    if (genLink) {
+        genLink.classList.toggle('hidden', mode !== 'generate');
+        genLink.setAttribute('aria-hidden', mode === 'generate' ? 'false' : 'true');
+    }
+    if (editLink) {
+        editLink.classList.toggle('hidden', mode !== 'edit');
+        editLink.setAttribute('aria-hidden', mode === 'edit' ? 'false' : 'true');
+    }
+
     const submitBtnIcon = $('#submitBtnIcon');
     const submitBtnText = $('#submitBtnText');
     if (mode === 'edit') {

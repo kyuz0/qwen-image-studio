@@ -7,6 +7,7 @@
     <title>Qwen Image Studio</title>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/picocss/2.0.6/pico.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css" />
 </head>
 
@@ -14,9 +15,9 @@
     <div class="container">
         <header class="headerbar">
             <div class="brand">
-                <span class="logo">🎨</span>
+                <img src="/static/logo.png" alt="Qwen" class="logo-img" width="32" height="32" />
                 <div class="brand-text">
-                    <h1>Qwen Image Studio</h1>
+                    <h1 class="app-title">Qwen Image Studio</h1>
                     <small class="muted">Text-to-image & Image edit</small>
                 </div>
             </div>
@@ -65,7 +66,16 @@
 
             <section class="card">
                 <form id="imageForm">
+                    <p id="generateModelLink" class="model-link-wrap">
+                        <a href="https://huggingface.co/Qwen/Qwen-Image" target="_blank" rel="noopener"
+                            class="model-link">Official Qwen-Image model on Hugging Face ↗</a>
+                    </p>
+                    <p id="editModelLink" class="model-link-wrap hidden" aria-hidden="true">
+                        <a href="https://huggingface.co/Qwen/Qwen-Image-Edit" target="_blank" rel="noopener"
+                            class="model-link">Official Qwen-Image-Edit on Hugging Face ↗</a>
+                    </p>
                     <div id="editSection" class="hidden" aria-hidden="true">
+
                         <div class="input-group">
                             <label>Upload Image</label>
                             <div class="upload-area" id="uploadArea">
