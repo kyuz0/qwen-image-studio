@@ -192,26 +192,30 @@ textarea {
     /* remove background / color overrides */
 }
 
-.jobs-header {
-    display: flex;
-    align-items: center;
-    gap: .75rem;
-    margin: .75rem 0 .75rem;
+.jobs-header{
+  display:flex;
+  align-items:flex-end; /* bottom-align with "Jobs" */
+  gap:.75rem;
+  margin:.75rem 0 .75rem;
+}
+.jobs-header h3{ margin:0; line-height:1.1; }
+
+.jobs-header #jobSearch{
+  height:34px;
+  padding:0 12px 0 34px;
+  font-size:14px;
+  border-radius:17px;
+  box-sizing:border-box;
+  line-height:34px;
+  -webkit-appearance:none;
+  background-position:10px 50% !important;
+  background-size:16px 16px !important;
 }
 
-.jobs-header h3 {
-    margin: 0;
-    line-height: 1.2;
-}
-
-/* slimmer search to align with button */
-.jobs-header #jobSearch {
-    height: 36px;
-    padding: .3rem .9rem;
-    font-size: .95rem;
-    line-height: 1;
-    border-radius: 20px;
-    box-sizing: border-box;
+.jobs-header #cancelAllBtn{
+  height:34px;
+  line-height:34px;
+  padding:0 12px;
 }
 
 button.small {
