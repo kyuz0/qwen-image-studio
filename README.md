@@ -1,5 +1,7 @@
 # Qwen Image Studio
 
+![Qwen Image Studio Screenshot](screenshot.png)
+
 A WebUI and job manager for [**qwen-image-mps**](https://github.com/ivanfioravanti/qwen-image-mps), extended with:
 
 * **FastAPI + WebSocket server** (`qwen-image-studio/server.py`)
