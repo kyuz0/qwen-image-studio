@@ -9,9 +9,23 @@ const JOBS_BATCH = 20;
 let jobsVisible = JOBS_BATCH;
 let _observerInit = false;
 
-
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+async function copyText(t) {
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(t);
+            return true;
+        }
+    } catch (_) { }
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (_) { }
+    document.body.removeChild(ta); return !!ok;
+}
 
 function togglePrompt(jobId, el) {
     if (expandedPrompts.has(jobId)) expandedPrompts.delete(jobId);
@@ -223,6 +237,12 @@ function formatDuration(seconds) {
 
 function updateUI() { updateQueue(); updateSubmitButton(); updateGallery(); }
 
+// OPTIMIZED: Only update jobs that have actually changed
+// Add this to track what was last rendered
+let lastRenderedJobs = new Map();
+let lastJobsVisible = 0;
+let lastSearchQuery = '';
+
 function updateQueue() {
     const queueSection = $('#jobQueue');
     const jobList = $('#jobList');
@@ -231,20 +251,193 @@ function updateQueue() {
         .filter(j => ['queued', 'processing', 'failed', 'completed', 'cancelling', 'cancelled'].includes(j.status))
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    // search (prompt)
+    // Search filtering
     if (jobSearchQuery.trim()) {
         const q = jobSearchQuery.toLowerCase();
         activeJobs = activeJobs.filter(j => (j.params?.prompt || '').toLowerCase().includes(q));
     }
 
     const total = activeJobs.length;
-    if (total === 0) { queueSection.classList.add('hidden'); jobList.innerHTML = ''; return; }
-    queueSection.classList.remove('hidden');
+    if (total === 0) {
+        queueSection.classList.add('hidden');
+        jobList.innerHTML = '';
+        lastRenderedJobs.clear();
+        return;
+    }
 
+    queueSection.classList.remove('hidden');
     jobsVisible = Math.min(jobsVisible, total);
     const visible = activeJobs.slice(0, jobsVisible);
     window.__filteredJobsCount = total;
 
+    // OPTIMIZATION: Only rebuild if something significant changed
+    const needsFullRebuild = (
+        lastJobsVisible !== jobsVisible ||
+        lastSearchQuery !== jobSearchQuery ||
+        lastRenderedJobs.size !== visible.length
+    );
+
+    if (needsFullRebuild) {
+        // Full rebuild needed
+        renderAllJobs(visible);
+        lastRenderedJobs.clear();
+        visible.forEach(job => lastRenderedJobs.set(job.id, { ...job }));
+        lastJobsVisible = jobsVisible;
+        lastSearchQuery = jobSearchQuery;
+        return;
+    }
+
+    // OPTIMIZED: Only update jobs that changed
+    visible.forEach(job => {
+        const lastJob = lastRenderedJobs.get(job.id);
+        if (!lastJob || jobHasChanged(job, lastJob)) {
+            updateSingleJob(job);
+            lastRenderedJobs.set(job.id, { ...job });
+        }
+    });
+}
+
+function jobHasChanged(current, previous) {
+    // Check the fields that matter for display
+    return (
+        current.status !== previous.status ||
+        current.stage !== previous.stage ||
+        (current.stages && JSON.stringify(current.stages) !== JSON.stringify(previous.stages)) ||
+        current.retry_count !== previous.retry_count ||
+        current.error !== previous.error ||
+        current.completed_at !== previous.completed_at
+    );
+}
+
+function updateSingleJob(job) {
+    const existingCard = document.querySelector(`[data-job-id="${job.id}"]`);
+    if (!existingCard) {
+        // Job doesn't exist, need full rebuild
+        const visible = Array.from(jobs.values())
+            .filter(j => ['queued', 'processing', 'failed', 'completed', 'cancelling', 'cancelled'].includes(j.status))
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, jobsVisible);
+        renderAllJobs(visible);
+        return;
+    }
+
+    // Update specific parts of the job card without touching animations
+    updateJobStatus(existingCard, job);
+    updateJobStages(existingCard, job);
+    updateJobThumbnail(existingCard, job);
+    updateJobActions(existingCard, job);
+    updateJobError(existingCard, job);
+}
+
+function updateJobStatus(cardEl, job) {
+    const statusPill = cardEl.querySelector('.status-pill');
+    const timeInfo = cardEl.querySelector('.job-info small.muted');
+
+    if (statusPill) {
+        statusPill.className = `status-pill ${job.status}`;
+        statusPill.textContent = job.status === 'processing' ? 'Generating'
+            : job.status === 'queued' ? 'Queued'
+                : job.status === 'cancelling' ? 'Cancelling'
+                    : job.status === 'cancelled' ? 'Cancelled'
+                        : job.status === 'failed' ? 'Failed'
+                            : job.status === 'completed' ? 'Completed'
+                                : job.status || '';
+    }
+
+    if (timeInfo) {
+        const isTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
+        const startTs = job.started_at ? new Date(job.started_at).getTime() : null;
+        const endTs = isTerminal
+            ? new Date(job.completed_at || job.updated_at || job.created_at || Date.now()).getTime()
+            : Date.now();
+        const elapsed = startTs ? Math.max(0, Math.floor((endTs - startTs) / 1000)) : 0;
+        const duration = (job.completed_at && job.started_at)
+            ? Math.max(0, Math.floor((new Date(job.completed_at).getTime() - startTs) / 1000))
+            : elapsed;
+
+        timeInfo.textContent = job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
+            : job.status === 'failed' ? `Failed after ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
+                : job.status === 'cancelled' ? `Stopped after ${formatDuration(elapsed)}`
+                    : `Elapsed: ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`;
+    }
+}
+
+function updateJobStages(cardEl, job) {
+    const stagesContainer = cardEl.querySelector('.job-stages');
+    if (!stagesContainer) return;
+
+    const order = ['model_loading', 'pipeline_loading', 'lora_loading', 'generation'];
+    const stagesHTML = job.stages ? Object.entries(job.stages)
+        .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
+        .map(([stage, data]) => `
+            <div class="stage-row">
+              <span class="stage-label">${formatStageName(stage)}</span>
+              <div class="stage-progress">
+                <progress value="${Math.round((data.progress || 0) * 100)}" max="100"></progress>
+                <span class="stage-status">${data.status === 'completed' ? '✓'
+                : data.status === 'active' ? `${Math.round((data.progress || 0) * 100)}%`
+                    : ''
+            }</span>
+              </div>
+            </div>
+        `).join('') : '';
+
+    stagesContainer.innerHTML = stagesHTML;
+}
+
+function updateJobThumbnail(cardEl, job) {
+    const thumbnail = cardEl.querySelector('.job-thumbnail:not(.source)');
+    if (!thumbnail) return;
+
+    const newClass = getThumbnailClass(job);
+    const newContent = getThumbnailContent(job);
+    const newClick = getThumbnailClick(job);
+
+    // CRITICAL: Only update if the class changed to avoid restarting animations
+    if (thumbnail.className !== `job-thumbnail ${newClass}`) {
+        thumbnail.className = `job-thumbnail ${newClass}`;
+    }
+
+    // Only update content if it changed
+    if (thumbnail.innerHTML !== newContent) {
+        thumbnail.innerHTML = newContent;
+    }
+
+    // Update click handler
+    thumbnail.setAttribute('onclick', newClick);
+}
+
+function updateJobActions(cardEl, job) {
+    const footer = cardEl.querySelector('.job-actions');
+    if (!footer) return;
+
+    const actionsHTML = (job.status === 'cancelling')
+        ? `<button type="button" class="secondary" disabled>⏳ Cancelling…</button>`
+        : (job.status === 'queued' || job.status === 'processing')
+            ? `<button type="button" class="secondary small" onclick="cancelJob('${job.id}')">❌ Cancel</button>`
+            : `<button type="button" class="secondary small" onclick="restartJob('${job.id}')">🔄 Restart</button>`;
+
+    footer.innerHTML = actionsHTML +
+        `<button type="button" class="secondary small" onclick="deleteJob('${job.id}')">🗑️ Delete</button>`;
+}
+
+function updateJobError(cardEl, job) {
+    let errorEl = cardEl.querySelector('.job-error');
+
+    if (shouldShowError(job)) {
+        if (!errorEl) {
+            errorEl = document.createElement('p');
+            errorEl.className = 'job-error';
+            cardEl.querySelector('.job-content').after(errorEl);
+        }
+        errorEl.textContent = job.error;
+    } else if (errorEl) {
+        errorEl.remove();
+    }
+}
+
+function renderAllJobs(visible) {
+    const jobList = $('#jobList');
     const order = ['model_loading', 'pipeline_loading', 'lora_loading', 'generation'];
 
     jobList.innerHTML = visible.map(job => {
@@ -258,100 +451,96 @@ function updateQueue() {
             ? Math.max(0, Math.floor((new Date(job.completed_at).getTime() - startTs) / 1000))
             : elapsed;
 
-
         const stagesHTML = job.stages ? Object.entries(job.stages)
             .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
             .map(([stage, data]) => `
-        <div class="stage-row">
-          <span class="stage-label">${formatStageName(stage)}</span>
-          <div class="stage-progress">
-            <progress value="${Math.round((data.progress || 0) * 100)}" max="100"></progress>
-            <span class="stage-status">${data.status === 'completed' ? '✓'
+                <div class="stage-row">
+                  <span class="stage-label">${formatStageName(stage)}</span>
+                  <div class="stage-progress">
+                    <progress value="${Math.round((data.progress || 0) * 100)}" max="100"></progress>
+                    <span class="stage-status">${data.status === 'completed' ? '✓'
                     : data.status === 'active' ? `${Math.round((data.progress || 0) * 100)}%`
                         : ''
                 }</span>
-          </div>
-        </div>
-      `).join('') : '';
+                  </div>
+                </div>
+            `).join('') : '';
 
         return `
-    <article class="job-card">
-        <div class="job-content">
-            <div class="job-info">
-               <header>
-                    <strong>${job.type}</strong>
-                </header>
-                <div class="job-prompt ${expandedPrompts.has(job.id) ? 'expanded' : ''}"
-                    onclick="togglePrompt('${job.id}', this)" title="Click to expand">
-                    ${escapeHTML(job.params?.prompt || '')}
-                </div>
-                ${(() => {
+            <article class="job-card" data-job-id="${job.id}">
+                <div class="job-content">
+                    <div class="job-info">
+                            <header><strong>Task: ${job.type === 'generate' ? '✨' : '✏️'} ${job.type === 'generate' ? 'Generate' : 'Edit'}</strong></header>                        <div class="job-prompt ${expandedPrompts.has(job.id) ? 'expanded' : ''}"
+                            onclick="togglePrompt('${job.id}', this)" title="Click to expand">
+                            <span class="job-prompt-text">${escapeHTML(job.params?.prompt || '')}</span>
+                            <button type="button" class="copyPromptBtn" data-id="${job.id}" title="Copy">📋</button>
+                        </div>
+                        ${(() => {
                 const p = job.params || {};
                 const tags = [];
-                if (p.ultra_fast === true || p.ultra_fast === "true") {
-                    tags.push("Ultra Fast (4 steps)");
-                } else if (p.fast === true || p.fast === "true") {
-                    tags.push("Fast (8 steps)");
-                } else if (p.steps) {
-                    tags.push(`${p.steps} steps`);
-                }
+                if (p.ultra_fast === true || p.ultra_fast === "true") tags.push("Ultra Fast (4 steps)");
+                else if (p.fast === true || p.fast === "true") tags.push("Fast (8 steps)");
+                else if (p.steps) tags.push(`${p.steps} steps`);
                 if (p.seed) tags.push(`Seed ${p.seed}`);
                 if (job.type === "generate" && p.size) tags.push(p.size);
                 return tags.length ? `<small class="muted job-params">${tags.join(" • ")}</small>` : "";
             })()}
-
-                 <span class="status-pill ${job.status}">
-                    ${job.status === 'processing' ? 'Generating'
+                        <span class="status-pill ${job.status}">${job.status === 'processing' ? 'Generating'
                 : job.status === 'queued' ? 'Queued'
                     : job.status === 'cancelling' ? 'Cancelling'
                         : job.status === 'cancelled' ? 'Cancelled'
                             : job.status === 'failed' ? 'Failed'
                                 : job.status === 'completed' ? 'Completed'
-                                    : escapeHTML(job.status || '')}
-                </span><br/>
-                <small class="muted">${job.status === 'completed'
-                ? `Completed in ${formatDuration(duration)}`
-                : job.status === 'failed'
-                    ? `Failed after ${formatDuration(elapsed)} · Retries ${job.retry_count}/${job.max_retries}`
-                    : job.status === 'cancelled'
-                        ? `Stopped after ${formatDuration(elapsed)}`
-                        : `Elapsed: ${formatDuration(elapsed)} · Retries ${job.retry_count}/${job.max_retries}`
+                                    : escapeHTML(job.status || '')
+            }</span><br/>
+                        <small class="muted">${job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
+                : job.status === 'failed' ? `Failed after ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
+                    : job.status === 'cancelled' ? `Stopped after ${formatDuration(elapsed)}`
+                        : `Elapsed: ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
             }</small>
-            </div>
-            
-            <div class="job-stages">
-                ${stagesHTML}
-            </div>
-            
-            <div class="job-thumbs">
-                ${job.type === 'edit' && job.params?.image_path
-                ? `<div class="job-thumbnail source" onclick="openImage('/api/file?path=${encodeURIComponent(job.params.image_path)}')">
-                        <img src="/api/file?path=${encodeURIComponent(job.params.image_path)}" alt="Source image"/>
-                        </div>
-                        <div class="arrow-down">↓</div>`
-                : ''
+                    </div>
+                    <div class="job-stages">${stagesHTML}</div>
+                    <div class="job-thumbs">
+                        ${job.type === 'edit' && job.params?.image_path ? `
+                            <div class="job-thumbnail source" onclick="openImage('/api/file?path=${encodeURIComponent(job.params.image_path)}')">
+                                <img src="/api/file?path=${encodeURIComponent(job.params.image_path)}" alt="Source image"/>
+                            </div>
+                            <div class="arrow-down">↓</div>` : ''
             }
-                <div class="job-thumbnail ${getThumbnailClass(job)}" onclick="${getThumbnailClick(job)}">
-                    ${getThumbnailContent(job)}
+                        <div class="job-thumbnail ${getThumbnailClass(job)}" onclick="${getThumbnailClick(job)}">
+                            ${getThumbnailContent(job)}
+                        </div>
+                    </div>
                 </div>
-            </div>
-
-        </div>
-
-        ${shouldShowError(job) ? `<p class="job-error">${escapeHTML(job.error)}</p>` : ''}
-
-        <footer class="job-actions">
-           ${(job.status === 'cancelling')
+                ${shouldShowError(job) ? `<p class="job-error">${escapeHTML(job.error)}</p>` : ''}
+                <footer class="job-actions">
+                    ${(job.status === 'cancelling')
                 ? `<button type="button" class="secondary" disabled>⏳ Cancelling…</button>`
                 : (job.status === 'queued' || job.status === 'processing')
-                    ? `<button type="button" class="secondary" onclick="cancelJob('${job.id}')">❌ Cancel</button>`
+                    ? `<button type="button" class="secondary" onclick="cancelJob('${job.id}')">⌫ Cancel</button>`
                     : `<button type="button" class="contrast" onclick="restartJob('${job.id}')">🔄 Restart</button>`
             }
-            <button type="button" class="secondary" onclick="deleteJob('${job.id}')">🗑️ Delete</button>
-        </footer>
-    </article>
-    `;
+                    <button type="button" class="secondary" onclick="deleteJob('${job.id}')">🗑️ Delete</button>
+                </footer>
+            </article>
+        `;
     }).join('');
+
+    // Re-attach copy button event listeners
+    $$('.copyPromptBtn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = e.currentTarget.dataset.id;
+            const text = (jobs.get(id)?.params?.prompt) || '';
+            if (!text) return;
+            const ok = await copyText(text);
+            if (ok) {
+                const old = btn.textContent;
+                btn.textContent = '✓';
+                setTimeout(() => btn.textContent = old, 900);
+            }
+        });
+    });
 }
 
 setInterval(() => { if (document.hasFocus()) updateQueue(); }, 1000);

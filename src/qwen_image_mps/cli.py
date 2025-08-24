@@ -12,6 +12,12 @@ from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 
+def get_output_dir():
+    """Get the default output directory for images."""
+    output_dir = Path.home() / ".qwen-image-studio"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
+
 def _full_command_line() -> str:
     return " ".join(shlex.quote(a) for a in sys.argv)
 
@@ -719,7 +725,6 @@ def generate_image(args) -> None:
                 true_cfg_scale=cfg_scale,
                 generator=generator,
             ).images[0]
-        _print_stage("Denoising finished")
 
         # Save with timestamp to avoid overwriting previous generations + PNG metadata
         output_dir = get_output_dir()
@@ -857,8 +862,11 @@ def edit_image(args) -> None:
             generator=generator,
             guidance_scale=cfg_scale,
         )
-        edited_image = output.images[0]
     _print_stage("Denoising finished")
+
+    _print_stage("VAE decode started")
+    edited_image = output.images[0]
+    _print_stage("VAE decode finished")
 
     if args.output:
         # If user specified output, respect it but ensure directory exists
