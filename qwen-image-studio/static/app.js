@@ -336,7 +336,7 @@ function updateSingleJob(job) {
 
 function updateJobStatus(cardEl, job) {
     const statusPill = cardEl.querySelector('.status-pill');
-    const timeInfo = cardEl.querySelector('.job-info small.muted');
+    const timeInfo = cardEl.querySelector('.job-time');
 
     if (statusPill) {
         statusPill.className = `status-pill ${job.status}`;
@@ -498,7 +498,7 @@ function renderAllJobs(visible) {
                                 : job.status === 'completed' ? 'Completed'
                                     : escapeHTML(job.status || '')
             }</span><br/>
-                        <small class="muted">${job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
+                        <small class="muted job-time">${job.status === 'completed' ? `Completed in ${formatDuration(duration)}`
                 : job.status === 'failed' ? `Failed after ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
                     : job.status === 'cancelled' ? `Stopped after ${formatDuration(elapsed)}`
                         : `Elapsed: ${formatDuration(elapsed)} • Retries ${job.retry_count}/${job.max_retries}`
