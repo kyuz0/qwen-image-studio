@@ -98,13 +98,13 @@
 }
 
 /* --- Content card right under tabs --- */
-.card {
-    background: var(--pico-background-color);
-    color: var(--pico-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-top: none;
-    border-radius: 0 0 var(--border-radius) var(--border-radius);
-    padding: 1rem;
+.card{
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-top: none;
+  border-radius: 0 0 var(--border-radius) var(--border-radius);
+  padding: 1rem;
 }
 
 
@@ -136,15 +136,15 @@ textarea {
     resize: vertical
 }
 
-.upload-area {
-    border: 2px dashed var(--pico-muted-border-color);
-    border-radius: 8px;
-    padding: 2rem;
-    text-align: center;
-    cursor: pointer;
-    transition: all .2s;
-    background: var(--pico-background-color);
-    color: var(--pico-color);
+.upload-area{
+  border: 2px dashed var(--pico-muted-border-color);
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
 }
 
 
@@ -192,13 +192,13 @@ textarea {
 }
 
 /* --- Jobs container --- */
-.jobs-card {
-    background: var(--pico-background-color);
-    color: var(--pico-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-radius: var(--border-radius);
-    padding: 1rem 1.25rem;
-    margin-top: 1rem;
+.jobs-card{
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--border-radius);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
 }
 
 
@@ -374,13 +374,13 @@ main {
 textarea,
 input[type="text"],
 input[type="number"],
-select {
-    font-size: 14px;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid var(--pico-muted-border-color);
-    background: var(--pico-background-color);
-    color: var(--pico-color);
+select{
+  font-size: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-background-color);
+  color: var(--pico-color);
 }
 
 
@@ -423,16 +423,25 @@ select {
 /* Thumbnail area */
 .job-thumbnail {
     order: -1;
-    width: 80px;
-    height: 80px;
+    width: 92px;
+    min-height: 92px;
+    height: auto;
     border-radius: 8px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 4px;
     flex-shrink: 0;
     border: 2px solid var(--pico-muted-border-color);
-    position: relative;
-    overflow: hidden;
+    overflow: visible;
+}
+
+.job-thumbnail img {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 6px;
 }
 
 .thumbnail-completed {
@@ -444,11 +453,6 @@ select {
     opacity: 0.8;
 }
 
-.thumbnail-completed img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
 
 .thumbnail-generating {
     background: var(--pico-primary-background);
@@ -583,160 +587,129 @@ select {
 }
 
 /* Tabs attach to card (hide seam) */
-.tabs {
-    margin-bottom: 0;
-}
-
-.tabs+.card {
-    margin-top: -1px;
-}
+.tabs { margin-bottom: 0; }
+.tabs + .card { margin-top: -1px; }
 
 /* Card under tabs: one clean definition */
-.card {
-    background: var(--pico-card-background-color);
-    border: 1px solid var(--pico-border-color);
-    border-top: none;
-    border-radius: 0 0 var(--border-radius) var(--border-radius);
-    padding: 1rem;
+.card{
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-border-color);
+  border-top: none;
+  border-radius: 0 0 var(--border-radius) var(--border-radius);
+  padding: 1rem;
 }
 
 /* Options accordion: simple, readable, consistent (both themes) */
-details.options>summary {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    padding: 1rem 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    background: var(--pico-background-color);
-    color: var(--pico-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-radius: 8px;
-    margin-bottom: 0px;
+details.options > summary{
+  display:flex; align-items:center; gap:.5rem;
+  padding: 1rem 1rem; font-weight:600; cursor:pointer; user-select:none;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius:8px;
+  margin-bottom: 0px;
 }
 
-details.options[open]>summary {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-}
+details.options[open] > summary{ border-bottom-left-radius:0; border-bottom-right-radius:0; }
 
-details.options .options-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: .55rem;
-    padding: .6rem;
-    background: var(--pico-background-color);
-    color: var(--pico-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-top: none;
-    border-radius: 0 0 8px 8px;
+details.options .options-grid{
+  display:grid; grid-template-columns:1fr 1fr;
+  gap:.55rem; padding:.6rem;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  border:1px solid var(--pico-muted-border-color);
+  border-top:none; border-radius:0 0 8px 8px;
 }
-
-.options-grid .input-group {
-    margin-bottom: .4rem;
-}
-
-.options-grid .input-group label {
-    margin-bottom: .35rem;
-}
-
-.checkbox-group {
-    gap: .75rem;
-    margin-top: .2rem;
-}
-
-.options-grid select {
-    max-width: 280px;
-}
+.options-grid .input-group{ margin-bottom:.4rem; }
+.options-grid .input-group label{ margin-bottom:.35rem; }
+.checkbox-group{ gap:.75rem; margin-top:.2rem; }
+.options-grid select{ max-width: 280px; }
 
 /* Inputs: follow surface, not pitch black in dark */
-textarea,
-input[type="text"],
-input[type="number"],
-select {
-    background: var(--pico-background-color);
+textarea, input[type="text"], input[type="number"], select{
+  background: var(--pico-background-color);
 }
 
 /* Jobs card: one definition */
-.jobs-card {
-    background: var(--pico-card-background-color);
-    border: 1px solid var(--pico-border-color);
-    border-radius: var(--border-radius);
-    padding: 1rem 1.25rem;
-    margin-top: 1rem;
+.jobs-card{
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-border-color);
+  border-radius: var(--border-radius);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
 }
 
 /* Lighter tabs (both themes) */
 /* Tabs: minimalist nav look */
 /* Tabs: left aligned, underline runs full width */
 .tabs {
-    display: flex;
-    justify-content: flex-start;
-    gap: 2rem;
-    border-bottom: 3px solid var(--pico-muted-border-color);
+  display: flex;
+  justify-content: flex-start;
+  gap: 2rem;
+  border-bottom: 3px solid var(--pico-muted-border-color);
 }
 
 .tab-button {
-    background: none;
-    border: none;
-    padding: .6rem 0;
-    font-weight: 600;
-    color: var(--pico-muted-color);
-    cursor: pointer;
-    position: relative;
-    transition: color .2s;
+  background: none;
+  border: none;
+  padding: .6rem 0;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  position: relative;
+  transition: color .2s;
 }
 
 .tab-button:hover {
-    color: var(--pico-color);
+  color: var(--pico-color);
 }
 
 .tab-button.active {
-    color: var(--pico-primary);
+  color: var(--pico-primary);
 }
 
 .tab-button.active::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -1px;
-    height: 2px;
-    background: var(--pico-primary);
-    border-radius: 2px;
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--pico-primary);
+  border-radius: 2px;
 }
 
 .tab-button:focus,
 .tab-button:focus-visible {
-    outline: none;
-    box-shadow: none;
+  outline: none;
+  box-shadow: none;
 }
 
 .job-params {
-    display: block;
-    margin: .15rem 0 .3rem 0;
-    font-size: .8rem;
-    color: var(--pico-muted-color);
+  display: block;
+  margin: .15rem 0 .3rem 0;
+  font-size: .8rem;
+  color: var(--pico-muted-color);
 }
 
 .job-source {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 4px;
 }
 
 .job-source img {
-    max-width: 60px;
-    max-height: 60px;
-    border-radius: 4px;
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
     border: 1px solid var(--pico-border-color);
-    margin-bottom: 2px;
 }
 
-.job-source .arrow-down {
-    font-size: 0.75rem;
+.arrow-down {
+    font-size: 0.85rem;
     line-height: 1;
     color: var(--pico-muted-color);
+    margin: 0 0 2px 0;
 }
