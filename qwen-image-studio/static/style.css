@@ -567,7 +567,6 @@ select {
 }
 
 .job-prompt.expanded {
-    white-space: pre-wrap;
     max-height: none;
 }
 
