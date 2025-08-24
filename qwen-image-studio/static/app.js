@@ -3,12 +3,15 @@ let currentMode = 'generate';
 let isSubmitting = false;
 const jobs = new Map();
 const actionLocks = new Set();
+const expandedPrompts = new Set();
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-function togglePrompt(element) {
-    element.classList.toggle('expanded');
+function togglePrompt(jobId, el) {
+    if (expandedPrompts.has(jobId)) expandedPrompts.delete(jobId);
+    else expandedPrompts.add(jobId);
+    el.classList.toggle('expanded');
 }
 
 function outputThumb(absPath) {
@@ -256,7 +259,8 @@ function updateQueue() {
                <header>
                     <strong>${job.type}</strong>
                 </header>
-                <div class="job-prompt" onclick="togglePrompt(this)" title="Click to expand">
+                <div class="job-prompt ${expandedPrompts.has(job.id) ? 'expanded' : ''}"
+                    onclick="togglePrompt('${job.id}', this)" title="Click to expand">
                     ${escapeHTML(job.params?.prompt || '')}
                 </div>
                 ${(() => {

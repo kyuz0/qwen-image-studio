@@ -567,13 +567,11 @@ select {
 }
 
 .job-prompt.expanded {
-    background: var(--pico-secondary-background);
     white-space: pre-wrap;
     max-height: none;
 }
 
 .job-prompt:hover {
-    background: var(--pico-secondary-background);
     color: var(--pico-color);
 }
 
