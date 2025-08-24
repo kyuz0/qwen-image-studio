@@ -128,11 +128,12 @@
             <section id="jobQueue" class="jobs-card hidden">
                 <div class="jobs-header">
                     <h3>Jobs</h3>
-                    <button id="cancelAllBtn" class="secondary small" aria-label="Cancel all active jobs">
-                        ❌ Cancel All
-                    </button>
+                    <input id="jobSearch" type="search" placeholder="Search prompts…" style="max-width:280px">
+                    <button id="cancelAllBtn" class="secondary small" aria-label="Cancel all active jobs">❌ Cancel
+                        All</button>
                 </div>
                 <div id="jobList"></div>
+                <nav id="jobPager" class="jobs-pager" aria-label="Jobs pagination"></nav>
             </section>
         </main>
 

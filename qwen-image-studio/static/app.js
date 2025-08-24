@@ -4,6 +4,9 @@ let isSubmitting = false;
 const jobs = new Map();
 const actionLocks = new Set();
 const expandedPrompts = new Set();
+let jobSearchQuery = '';
+let jobPage = 1;
+const JOBS_PER_PAGE = 10;
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -212,16 +215,30 @@ function updateQueue() {
     const queueSection = $('#jobQueue');
     const jobList = $('#jobList');
 
-    const activeJobs = Array.from(jobs.values())
+    let activeJobs = Array.from(jobs.values())
         .filter(j => ['queued', 'processing', 'failed', 'completed', 'cancelling', 'cancelled'].includes(j.status))
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    if (activeJobs.length === 0) { queueSection.classList.add('hidden'); return; }
+    // search (prompt)
+    if (jobSearchQuery.trim()) {
+        const q = jobSearchQuery.toLowerCase();
+        activeJobs = activeJobs.filter(j => (j.params?.prompt || '').toLowerCase().includes(q));
+    }
+
+    // pagination
+    const total = activeJobs.length;
+    const totalPages = Math.max(1, Math.ceil(total / JOBS_PER_PAGE));
+    jobPage = Math.min(Math.max(1, jobPage), totalPages);
+    const start = (jobPage - 1) * JOBS_PER_PAGE;
+    const pageSlice = activeJobs.slice(start, start + JOBS_PER_PAGE);
+
+    if (total === 0) { queueSection.classList.add('hidden'); return; }
     queueSection.classList.remove('hidden');
+
 
     const order = ['model_loading', 'pipeline_loading', 'lora_loading', 'generation'];
 
-    jobList.innerHTML = activeJobs.map(job => {
+    jobList.innerHTML = pageSlice.map(job => {
         const isTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
         const startTs = job.started_at ? new Date(job.started_at).getTime() : null;
         const endTs = isTerminal
@@ -248,9 +265,15 @@ function updateQueue() {
         </div>
       `).join('') : '';
 
-        const outputsHTML = (job.outputs && job.outputs.length)
-            ? `<div class="job-outputs">${job.outputs.map(outputThumb).join('')}</div>`
-            : '';
+        // render pager
+        const pager = $('#jobPager');
+        pager.innerHTML = `
+            <button type="button" id="jobPrev" class="secondary small" ${jobPage <= 1 ? 'disabled' : ''}>◀ Prev</button>
+            <span style="margin:0 .5rem;">Page ${jobPage} / ${Math.max(1, Math.ceil(total / JOBS_PER_PAGE))} · ${total} item(s)</span>
+            <button type="button" id="jobNext" class="secondary small" ${jobPage >= Math.max(1, Math.ceil(total / JOBS_PER_PAGE)) ? 'disabled' : ''}>Next ▶</button>
+            `;
+        $('#jobPrev')?.addEventListener('click', () => { if (jobPage > 1) { jobPage--; updateQueue(); } });
+        $('#jobNext')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(total / JOBS_PER_PAGE)); if (jobPage < max) { jobPage++; updateQueue(); } });
 
         return `
     <article class="job-card">
@@ -541,4 +564,13 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#themeToggle').addEventListener('click', toggleTheme);
 
     $('#imageForm').addEventListener('submit', submitForm);
+    const searchEl = $('#jobSearch');
+    if (searchEl) {
+        searchEl.addEventListener('input', (e) => {
+            jobSearchQuery = e.target.value || '';
+            jobPage = 1;
+            updateQueue();
+        });
+    }
+
 });
