@@ -521,12 +521,12 @@ function renderAllJobs(visible) {
                 ${shouldShowError(job) ? `<p class="job-error">${escapeHTML(job.error)}</p>` : ''}
                 <footer class="job-actions">
                     ${(job.status === 'cancelling')
-                ? `<button type="button" class="secondary" disabled>⏳ Cancelling…</button>`
+                ? `<button type="button" class="secondary small" disabled>⏳ Cancelling…</button>`
                 : (job.status === 'queued' || job.status === 'processing')
-                    ? `<button type="button" class="secondary" onclick="cancelJob('${job.id}')">⌫ Cancel</button>`
-                    : `<button type="button" class="contrast" onclick="restartJob('${job.id}')">🔄 Restart</button>`
+                    ? `<button type="button" class="secondary small" onclick="cancelJob('${job.id}')">❌ Cancel</button>`
+                    : `<button type="button" class="secondary small" onclick="restartJob('${job.id}')">🔄 Restart</button>`
             }
-                    <button type="button" class="secondary" onclick="deleteJob('${job.id}')">🗑️ Delete</button>
+                    <button type="button" class="secondary small" onclick="deleteJob('${job.id}')">🗑️ Delete</button>
                 </footer>
             </article>
         `;
