@@ -173,23 +173,7 @@ class GPUMonitor:
         self.rocm_smi_path = self.find_rocm_smi()
         
     def find_rocm_smi(self):
-        paths = [
-            "/opt/rocm/bin/rocm-smi",
-            "/usr/bin/rocm-smi",
-            "/usr/local/bin/rocm-smi",
-            "/opt/amdgpu-pro/bin/amd-smi",
-            "/usr/bin/amd-smi"
-        ]
-        for path in paths:
-            if os.path.isfile(path) and os.access(path, os.X_OK):
-                return path
-        try:
-            result = subprocess.run(["which", "rocm-smi"], capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except:
-            pass
-        return None
+        return 'rocm-smi'
     
     def get_stats(self):
         if not self.rocm_smi_path:
