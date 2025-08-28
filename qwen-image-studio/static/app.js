@@ -259,8 +259,9 @@ function updateQueue() {
 
     const total = activeJobs.length;
     if (total === 0) {
-        queueSection.classList.add('hidden');
-        jobList.innerHTML = '';
+        // Don't hide the whole section - keep search bar visible
+        queueSection.classList.remove('hidden'); // Make sure section stays visible
+        jobList.innerHTML = '<p class="muted" style="text-align: center; padding: 2rem;">No jobs found.</p>';
         lastRenderedJobs.clear();
         return;
     }
