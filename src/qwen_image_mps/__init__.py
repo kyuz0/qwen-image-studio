@@ -2,6 +2,8 @@
 
 __version__ = "0.4.2"
 
+from .core import get_manager, QwenImageManager  # optional, just convenience
+
 from .cli import (
     build_edit_parser,
     build_generate_parser,
