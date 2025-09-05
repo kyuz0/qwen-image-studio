@@ -30,10 +30,17 @@ def _now_ts() -> str:
     return _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 def _emit(cb: Optional[ProgressCB], stage: Stage, msg: str, p: Optional[float] = None):
-    if cb:
-        try: cb(stage, msg, p)
-        except Exception: pass
-
+    if not cb:
+        return
+    try:
+        import inspect, asyncio
+        if inspect.iscoroutinefunction(cb):
+            asyncio.get_running_loop().create_task(cb(stage, msg, p))
+        else:
+            cb(stage, msg, p)
+    except Exception:
+        pass
+    
 def _get_device_and_dtype() -> Tuple[str, "torch.dtype"]:
     import torch
     # Order: MPS → CUDA/ROCm → CPU (bf16 on accel, f32 on CPU)
@@ -470,10 +477,10 @@ class QwenImageManager:
             _emit(cb, "model_loading", f"Loading base: {model_name}", 0.0)
             if kind == "edit":
                 from diffusers import QwenImageEditPipeline as _Pipe
-                pipe = _Pipe.from_pretrained(model_name, torch_dtype=self._dtype)
+                pipe = _Pipe.from_pretrained(model_name, dtype=self._dtype)
             else:
                 from diffusers import DiffusionPipeline as _Pipe
-                pipe = _Pipe.from_pretrained(model_name, torch_dtype=self._dtype)
+                pipe = _Pipe.from_pretrained(model_name, dtype=self._dtype)
 
             _emit(cb, "pipeline_loading", "Moving to device", None)
             pipe = pipe.to(self._device)

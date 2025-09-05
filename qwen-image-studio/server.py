@@ -294,7 +294,7 @@ async def process_queue():
     while True:
         try:
             job_id = job_queue.pop(0)
-        except asyncio.QueueEmpty:
+        except IndexError:
             await asyncio.sleep(1)
             continue
 
@@ -314,8 +314,8 @@ async def process_queue():
 
         try:
             def _cb(stage, msg, p):
-                stage_update(job, stage, msg or "", p)
-                asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
+            stage_update(job, stage, msg or "", p)
+            asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
 
             params = job["params"]
             saved_paths = []
