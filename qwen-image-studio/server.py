@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 import json as _json
+import subprocess
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Form, File, UploadFile
@@ -312,7 +313,6 @@ async def process_queue():
         save_jobs()
 
         try:
-            # progress → mirror existing stages
             def _cb(stage, msg, p):
                 stage_update(job, stage, msg or "", p)
                 asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
