@@ -314,8 +314,8 @@ async def process_queue():
 
         try:
             def _cb(stage, msg, p):
-            stage_update(job, stage, msg or "", p)
-            asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
+                stage_update(job, stage, msg or "", p)
+                asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
 
             params = job["params"]
             saved_paths = []
