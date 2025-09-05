@@ -611,6 +611,16 @@ def generate_image(args) -> None:
     _print_stage(f"Loading base pipeline: {model_name} (dtype={torch_dtype})")
     pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
     pipe = pipe.to(device)
+
+    # Enable bf16 + native VAE tiling (Diffusers)
+    try:
+        pipe.vae.to(device=device, dtype=torch_dtype)
+        if hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+        print("VAE: native tiling ENABLED (bf16)")
+    except Exception as e:
+        print(f"VAE: native tiling not available ({e})")
+
     pipe.set_progress_bar_config(
         disable=False,
         leave=True,              # keep the final bar
@@ -768,6 +778,15 @@ def edit_image(args) -> None:
         "Qwen/Qwen-Image-Edit", torch_dtype=torch_dtype
     )
     pipeline = pipeline.to(device)
+    # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
+    try:
+        pipeline.vae.to(device=device, dtype=torch_dtype)
+        if hasattr(pipeline.vae, "enable_tiling"):
+            pipeline.vae.enable_tiling()
+        print("Edit VAE: native tiling ENABLED (bf16)")
+    except Exception as e:
+        print(f"Edit VAE: native tiling not available ({e})")
+
     pipeline.set_progress_bar_config(
         disable=False,
         leave=True,              # keep the final bar
