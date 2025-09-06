@@ -773,6 +773,7 @@ def edit_image(args) -> None:
         "Qwen/Qwen-Image-Edit",
         torch_dtype=torch_dtype,
         use_safetensors=True,
+        device_map=device,
     )
 
     try:
