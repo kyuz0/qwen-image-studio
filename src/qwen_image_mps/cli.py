@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
+import safetensors.torch as _st
+
 
 def get_output_dir():
     """Get the default output directory for images."""
@@ -950,15 +952,18 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.no_mmap:
-        import safetensors.torch as _st
-
         def _no_mmap_load_file(filename, device=None, **kwargs):
             with open(filename, "rb") as f:
                 data = f.read()
-            return _st.load(data, device=device)
+            state = _st.load(data)  # no device arg here
+            if device is not None:
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device=device, non_blocking=True)
+            return state
 
         _st.load_file = _no_mmap_load_file
-        print("⚠️ Memory-mapped loading disabled")
+        print("⚠️ Memory-mapped loading disabled (direct-to-device remap applied)")
 
     # Handle the command
     if args.command == "generate":
