@@ -662,7 +662,6 @@ def generate_image(args) -> None:
     _wrap_timed(pipe.vae, "decode", "vae_decode")
     _wrap_timed(pipe.scheduler, "set_timesteps", "set_timesteps")
     _wrap_timed(pipe.text_encoder, "forward", "text_encoder_forward")
-    _wrap_timed(pipe.transformer, "forward", "transformer_forward")
     # ---- END DEBUG TIMERS ----
 
     pipe.set_progress_bar_config(
@@ -852,7 +851,6 @@ def edit_image(args) -> None:
     _wrap_timed(pipeline.image_processor, "preprocess", "img_preprocess")
     _wrap_timed(pipeline.scheduler, "set_timesteps", "set_timesteps")
     _wrap_timed(pipeline.text_encoder, "forward", "text_encoder_forward")
-    _wrap_timed(pipeline.transformer, "forward", "transformer_forward")
     # ---- END DEBUG TIMERS ----
 
 
