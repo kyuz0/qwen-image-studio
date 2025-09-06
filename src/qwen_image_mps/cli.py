@@ -5,7 +5,9 @@ import sys
 import shlex
 import time
 import torch
+import re
 import sys
+import tqdm.auto as tqdm_auto
 from datetime import datetime
 from contextlib import contextmanager
 from threading import Event, Thread
@@ -41,8 +43,6 @@ def _patch_diffusers_progress():
     Context manager to patch diffusers' tqdm to emit explicit progress messages
     that the web server can parse.
     """
-    import tqdm.auto as tqdm_auto
-    import sys
     original_tqdm = tqdm_auto.tqdm
 
     class DenoiseProgressTqdm(original_tqdm):
@@ -277,21 +277,12 @@ def get_custom_lora_path(lora_spec):
         return None
 
 def merge_lora_from_safetensors(pipe, lora_path):
-    """
-    Merge LoRA weights from a .safetensors file into the pipeline's transformer,
-    with a tqdm progress bar.
-
-    - Computes an accurate total first (dry run), then merges with updates.
-    - Runs the matmul on the param's device (CUDA/MPS/CPU).
-    - Emits CLI stage beacons so your server logs/regex can react.
-    """
     import safetensors.torch as st
     import torch, re
 
     try:
         from tqdm.auto import tqdm
     except Exception:
-        # Fallback if tqdm is unavailable (no-op bar)
         class _Dummy:
             def __init__(self, *a, **k): pass
             def update(self, *a, **k): pass
@@ -299,12 +290,12 @@ def merge_lora_from_safetensors(pipe, lora_path):
         def tqdm(*a, **k): return _Dummy()
 
     _print_stage("LoRA merge: loading weights…")
-    with open(lora_path, "rb") as f:
-        lora_state = st.load(f.read())
-
     transformer = getattr(pipe, "transformer", None) or getattr(pipe, "unet", None)
     if transformer is None:
         raise RuntimeError("Could not locate pipeline.transformer or pipeline.unet to merge LoRA into")
+
+    target_device = str(next(transformer.parameters()).device)
+    lora_state = st.load_file(lora_path, device=target_device)
 
     keys = set(lora_state.keys())
     uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
@@ -339,8 +330,8 @@ def merge_lora_from_safetensors(pipe, lora_path):
         delta_W = torch.matmul(lora_up, lora_down) * float(scaling)
         param.data.add_(delta_W.to(dtype=param.data.dtype))
 
-    # ---------- first pass: count how many params will actually be merged ----------
     _print_stage("LoRA merge: scanning model…")
+
     def count_merges() -> int:
         cnt = 0
         if uses_ab:
@@ -351,7 +342,6 @@ def merge_lora_from_safetensors(pipe, lora_path):
                 if (a1 in keys and b1 in keys) or (a2 in keys and b2 in keys):
                     cnt += 1
         elif uses_diff:
-            # Build a quick index of diffusers bases present in the LoRA
             bases = {}
             for k in keys:
                 if not k.startswith("lora_unet_"):
@@ -365,9 +355,8 @@ def merge_lora_from_safetensors(pipe, lora_path):
             for name, _ in transformer.named_parameters():
                 base = name[:-7] if name.endswith(".weight") else name
                 ks = bases.get(base)
-                if not ks: 
+                if not ks:
                     continue
-                # consider it a match if both down/up exist
                 has_down = any(k.endswith(".lora_down.weight") for k in ks)
                 has_up   = any(k.endswith(".lora_up.weight")   for k in ks)
                 if has_down and has_up:
@@ -392,7 +381,6 @@ def merge_lora_from_safetensors(pipe, lora_path):
     pbar = tqdm(total=total or None, desc="Merging LoRA", leave=True, mininterval=0.2)
     merged = 0
 
-    # ---------- second pass: do the actual merge with progress ----------
     if uses_ab:
         for name, param in transformer.named_parameters():
             base = name[:-7] if name.endswith(".weight") else name
@@ -405,13 +393,12 @@ def merge_lora_from_safetensors(pipe, lora_path):
             else:
                 continue
             rank = lora_down.shape[0]
-            scaling = 1.0 if rank == 0 else (float(rank) / float(rank))  # alpha==rank default
+            scaling = 1.0 if rank == 0 else (float(rank) / float(rank))
             _device_merge(param, lora_down, lora_up, scaling)
             merged += 1
             pbar.update(1)
 
     elif uses_diff:
-        # Index the keys for quick lookups
         alpha_map = {}
         down_map  = {}
         up_map    = {}
@@ -439,7 +426,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
             if base in alpha_map:
                 lora_alpha = float(lora_state[alpha_map[base]])
             else:
-                lora_alpha = lora_down.shape[0]  # default alpha = rank
+                lora_alpha = lora_down.shape[0]
             rank = lora_down.shape[0]
             scaling = (lora_alpha / rank) if rank else 1.0
             _device_merge(param, lora_down, lora_up, scaling)
@@ -581,23 +568,21 @@ def download_models(args) -> None:
             print(f"{t}: cached file -> {path}")
 
 def get_device_and_dtype():
-    """Get the optimal device and dtype for the current system."""
-    import torch
-
-    if torch.backends.mps.is_available():
+    if torch.cuda.is_available():
+        print("Using CUDA/ROCm")
+        return "cuda", torch.bfloat16
+    elif torch.backends.mps.is_available():
         print("Using MPS")
         return "mps", torch.bfloat16
-    elif torch.cuda.is_available():
-        print("Using CUDA")
-        return "cuda", torch.bfloat16
     else:
         print("Using CPU")
         return "cpu", torch.float32
 
+def _device_map_str(device: str) -> str:
+    return "cuda:0" if device == "cuda" else device
 
 def create_generator(device, seed):
     """Create a torch.Generator with the appropriate device."""
-    import torch
 
     generator_device = "cpu" if device == "mps" else device
     return torch.Generator(device=generator_device).manual_seed(seed)
@@ -609,8 +594,16 @@ def generate_image(args) -> None:
     device, torch_dtype = get_device_and_dtype()
 
     _print_stage(f"Loading base pipeline: {model_name} (dtype={torch_dtype})")
-    pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
-    pipe = pipe.to(device)
+    torch.set_default_device(device)
+
+    pipe = DiffusionPipeline.from_pretrained(
+        model_name,
+        torch_dtype=torch_dtype,
+        use_safetensors=True,
+        low_cpu_mem_usage=True,
+        device_map={"": _device_map_str(device)},
+    )
+
 
     # Enable bf16 + native VAE tiling (Diffusers)
     try:
@@ -767,17 +760,22 @@ def generate_image(args) -> None:
             print(f"- {path}")
 
 def edit_image(args) -> None:
-    import torch
     from diffusers import QwenImageEditPipeline
     from PIL import Image
 
     device, torch_dtype = get_device_and_dtype()
 
     print("Loading Qwen-Image-Edit model for image editing...")
+    torch.set_default_device(device)
+
     pipeline = QwenImageEditPipeline.from_pretrained(
-        "Qwen/Qwen-Image-Edit", torch_dtype=torch_dtype
+        "Qwen/Qwen-Image-Edit",
+        torch_dtype=torch_dtype,
+        use_safetensors=True,
+        low_cpu_mem_usage=True,
+        device_map={"": _device_map_str(device)},
     )
-    pipeline = pipeline.to(device)
+
     # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
     try:
         pipeline.vae.to(device=device, dtype=torch_dtype)
@@ -957,8 +955,7 @@ def main() -> None:
         def _no_mmap_load_file(filename, device=None, **kwargs):
             with open(filename, "rb") as f:
                 data = f.read()
-            state_dict = _st.load(data)  # no mmap, no device kw
-            return state_dict
+            return _st.load(data, device=device)
 
         _st.load_file = _no_mmap_load_file
         print("⚠️ Memory-mapped loading disabled")
