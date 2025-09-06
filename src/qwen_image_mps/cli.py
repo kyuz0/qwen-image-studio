@@ -602,7 +602,6 @@ def generate_image(args) -> None:
         model_name,
         torch_dtype=torch_dtype,
         use_safetensors=True,
-        low_cpu_mem_usage=True,
         device_map=device,
     )
 
@@ -774,9 +773,16 @@ def edit_image(args) -> None:
         "Qwen/Qwen-Image-Edit",
         torch_dtype=torch_dtype,
         use_safetensors=True,
-        low_cpu_mem_usage=True,
-        device_map=device,
     )
+
+    try:
+        pipeline.enable_sdpa()
+    except Exception:
+        try:
+            from diffusers.models.attention_processor import AttnProcessor2_0
+            pipeline.set_attn_processor(AttnProcessor2_0())
+        except Exception:
+            pass
 
     # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
     try:
@@ -789,8 +795,9 @@ def edit_image(args) -> None:
 
     pipeline.set_progress_bar_config(
         disable=False,
-        leave=True,              # keep the final bar
-        miniters=1
+        leave=True,
+        miniters=1,
+        desc="Denoising",
     )
     _print_stage("Edit pipeline ready on device")
 
@@ -877,33 +884,21 @@ def edit_image(args) -> None:
             print(f"CLI: denoise {pct}%", flush=True)
             _edit_progress_cb._last = pct
 
+
+    pipeline.set_progress_bar_config(disable=False, leave=True, miniters=1, desc="Denoising")
+
     _print_stage("Invoking edit pipeline")
     _print_stage("Denoising started")
     with _patch_diffusers_progress():
-        try:
-            output = pipeline(
-                image=image,
-                prompt=edit_prompt,
-                negative_prompt=" ",
-                num_inference_steps=num_steps,
-                generator=generator,
-                guidance_scale=cfg_scale,
-                callback=_edit_progress_cb,
-                callback_steps=1,
-            )
-        except TypeError:
-            output = pipeline(
-                image=image,
-                prompt=edit_prompt,
-                negative_prompt=" ",
-                num_inference_steps=num_steps,
-                generator=generator,
-                guidance_scale=cfg_scale,
-            )
-
+        edited_image = pipeline(
+            image=image,
+            prompt=edit_prompt,
+            negative_prompt=" ",
+            num_inference_steps=num_steps,
+            generator=generator,
+            guidance_scale=cfg_scale,
+        ).images[0]
     _print_stage("Denoising finished")
-
-    edited_image = output.images[0]
 
     if args.output:
         # If user specified output, respect it but ensure directory exists
