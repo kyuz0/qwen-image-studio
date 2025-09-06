@@ -882,10 +882,10 @@ def edit_image(args) -> None:
     _orig_enc = type(pipeline)._encode_vae_image
     def _encode_vae_image_autocast(self, image, generator):
         image = image.to(device=self.vae.device, dtype=torch.float32, non_blocking=True).contiguous()
-        import torch
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             return _orig_enc(self, image, generator)
     pipeline._encode_vae_image = _encode_vae_image_autocast.__get__(pipeline, type(pipeline))
+
 
     # (optional single-line proof)
     print("EDIT VAE:", next(pipeline.vae.parameters()).dtype, next(pipeline.vae.parameters()).device, flush=True)
