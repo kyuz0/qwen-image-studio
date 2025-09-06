@@ -870,22 +870,40 @@ def edit_image(args) -> None:
     print(f"Using {num_steps} inference steps...")
 
     _print_stage(f"Editing config: steps={num_steps}, cfg={cfg_scale}")
+
+    def _edit_progress_cb(step, *_, **__):
+        pct = int((step + 1) * 100 // max(1, num_steps))
+        if getattr(_edit_progress_cb, "_last", -1) != pct:
+            print(f"CLI: denoise {pct}%", flush=True)
+            _edit_progress_cb._last = pct
+
     _print_stage("Invoking edit pipeline")
     _print_stage("Denoising started")
     with _patch_diffusers_progress():
-        output = pipeline(
-            image=image,
-            prompt=edit_prompt,
-            negative_prompt=" ",
-            num_inference_steps=num_steps,
-            generator=generator,
-            guidance_scale=cfg_scale,
-        )
+        try:
+            output = pipeline(
+                image=image,
+                prompt=edit_prompt,
+                negative_prompt=" ",
+                num_inference_steps=num_steps,
+                generator=generator,
+                guidance_scale=cfg_scale,
+                callback=_edit_progress_cb,
+                callback_steps=1,
+            )
+        except TypeError:
+            output = pipeline(
+                image=image,
+                prompt=edit_prompt,
+                negative_prompt=" ",
+                num_inference_steps=num_steps,
+                generator=generator,
+                guidance_scale=cfg_scale,
+            )
+
     _print_stage("Denoising finished")
 
-    _print_stage("VAE decode started")
     edited_image = output.images[0]
-    _print_stage("VAE decode finished")
 
     if args.output:
         # If user specified output, respect it but ensure directory exists
