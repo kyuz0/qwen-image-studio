@@ -768,10 +768,9 @@ def edit_image(args) -> None:
     print("Loading Qwen-Image-Edit model for image editing...")
     torch.set_default_device(device)
 
-    edit_dtype = torch.float16 if device == "cuda" else torch_dtype
     pipeline = QwenImageEditPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit",
-        torch_dtype=edit_dtype,
+        torch_dtype=torch_dtype,
         use_safetensors=True,
     )
     pipeline = pipeline.to(device)
