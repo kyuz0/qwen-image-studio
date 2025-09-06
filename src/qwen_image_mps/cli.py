@@ -614,6 +614,45 @@ def generate_image(args) -> None:
     except Exception as e:
         print(f"VAE: native tiling not available ({e})")
 
+    # ---- DEBUG TIMERS (generate only) ----
+    import time
+
+    def _wrap_timed(obj, name, label):
+        if not hasattr(type(obj), name):
+            return
+        orig = getattr(type(obj), name)
+        def _timed(self, *args, **kwargs):
+            t = time.perf_counter()
+            print(f"CLI: {label} start", flush=True)
+            try:
+                return orig(self, *args, **kwargs)
+            finally:
+                print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+        setattr(obj, name, _timed.__get__(obj, type(obj)))
+
+    def _wrap_timed_static(obj, name, label):
+        if not hasattr(obj, name):
+            return
+        orig = getattr(obj, name)
+        def _timed(*args, **kwargs):
+            t = time.perf_counter()
+            print(f"CLI: {label} start", flush=True)
+            try:
+                return orig(*args, **kwargs)
+            finally:
+                print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+        setattr(obj, name, _timed)
+
+    _wrap_timed(pipe, "encode_prompt", "encode_prompt")
+    _wrap_timed(pipe, "prepare_latents", "prepare_latents")
+    _wrap_timed_static(pipe, "_unpack_latents", "unpack_latents")
+    _wrap_timed(pipe.vae, "decode", "vae_decode")
+    _wrap_timed(pipe.scheduler, "set_timesteps", "set_timesteps")
+    _wrap_timed(pipe.text_encoder, "forward", "text_encoder_forward")
+    _wrap_timed(pipe.transformer, "forward", "transformer_forward")
+    # ---- END DEBUG TIMERS ----
+
+
     pipe.set_progress_bar_config(
         disable=False,
         leave=True,              # keep the final bar
