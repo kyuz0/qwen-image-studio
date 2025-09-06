@@ -601,7 +601,7 @@ def generate_image(args) -> None:
         torch_dtype=torch_dtype,
         use_safetensors=True,
         low_cpu_mem_usage=True,
-        device_map={"": _device_map_str(device)},
+        device_map=device,
     )
 
 
@@ -773,7 +773,7 @@ def edit_image(args) -> None:
         torch_dtype=torch_dtype,
         use_safetensors=True,
         low_cpu_mem_usage=True,
-        device_map={"": _device_map_str(device)},
+        device_map=device,
     )
 
     # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
