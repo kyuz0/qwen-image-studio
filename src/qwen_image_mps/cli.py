@@ -869,13 +869,27 @@ def edit_image(args) -> None:
             pass
 
     # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
+    # VAE weights fp32, compute via bf16 autocast during encode (fast on ROCm)
     try:
-        pipeline.vae.to(device=device, dtype=torch_dtype)
+        pipeline.vae.to(device=device, dtype=torch.float32)
         if hasattr(pipeline.vae, "enable_tiling"):
             pipeline.vae.enable_tiling()
-        print("Edit VAE: native tiling ENABLED (bf16)")
+        print("Edit VAE: fp32 weights + tiling")
     except Exception as e:
-        print(f"Edit VAE: native tiling not available ({e})")
+        print(f"Edit VAE: VAE setup failed ({e})")
+    
+    # Run VAE.encode under bf16 autocast, ensure input matches VAE device
+    _orig_enc = type(pipeline)._encode_vae_image
+    def _encode_vae_image_autocast(self, image, generator):
+        image = image.to(device=self.vae.device, dtype=torch.float32, non_blocking=True).contiguous()
+        import torch
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            return _orig_enc(self, image, generator)
+    pipeline._encode_vae_image = _encode_vae_image_autocast.__get__(pipeline, type(pipeline))
+
+    # (optional single-line proof)
+    print("EDIT VAE:", next(pipeline.vae.parameters()).dtype, next(pipeline.vae.parameters()).device, flush=True)
+
 
     pipeline.set_progress_bar_config(
         disable=False,
