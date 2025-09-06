@@ -605,7 +605,6 @@ def generate_image(args) -> None:
         device_map=device,
     )
 
-
     # Enable bf16 + native VAE tiling (Diffusers)
     try:
         pipe.vae.to(device=device, dtype=torch_dtype)
@@ -769,12 +768,13 @@ def edit_image(args) -> None:
     print("Loading Qwen-Image-Edit model for image editing...")
     torch.set_default_device(device)
 
+    edit_dtype = torch.float16 if device == "cuda" else torch_dtype
     pipeline = QwenImageEditPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit",
-        torch_dtype=torch_dtype,
+        torch_dtype=edit_dtype,
         use_safetensors=True,
-        device_map=device,
     )
+    pipeline = pipeline.to(device)
 
     try:
         pipeline.enable_sdpa()
@@ -887,6 +887,24 @@ def edit_image(args) -> None:
 
 
     pipeline.set_progress_bar_config(disable=False, leave=True, miniters=1, desc="Denoising")
+
+    import time
+
+    _orig_encode_prompt = pipeline.encode_prompt
+    def _timed_encode_prompt(*a, **k):
+        t = time.perf_counter(); print("CLI: encode_prompt start", flush=True)
+        out = _orig_encode_prompt(*a, **k)
+        print(f"CLI: encode_prompt done in {time.perf_counter()-t:.2f}s", flush=True)
+        return out
+    pipeline.encode_prompt = _timed_encode_prompt.__get__(pipeline, type(pipeline))
+
+    _orig_vae_encode = pipeline._encode_vae_image
+    def _timed_vae_encode(*a, **k):
+        t = time.perf_counter(); print("CLI: vae_encode start", flush=True)
+        out = _orig_vae_encode(*a, **k)
+        print(f"CLI: vae_encode done in {time.perf_counter()-t:.2f}s", flush=True)
+        return out
+    pipeline._encode_vae_image = _timed_vae_encode.__get__(pipeline, type(pipeline))
 
     _print_stage("Invoking edit pipeline")
     _print_stage("Denoising started")
