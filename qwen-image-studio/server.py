@@ -307,15 +307,19 @@ async def process_queue():
         job["started_at"] = now_iso()
         job["stage"] = "starting"
         save_jobs()
+        await hub.broadcast({"type": "job_update", "job": job})
 
         # in-proc path (no subprocess)
         job["command"] = "(in-proc) qwen_image_mps.core"
         save_jobs()
 
         try:
+            loop = asyncio.get_running_loop()
+
             def _cb(stage, msg, p):
                 stage_update(job, stage, msg or "", p)
-                asyncio.create_task(hub.broadcast({"type": "job_update", "job": job}))
+                # schedule broadcast safely from the worker thread
+                loop.call_soon_threadsafe(asyncio.create_task, hub.broadcast({"type": "job_update", "job": job}))
 
             params = job["params"]
             saved_paths = []
