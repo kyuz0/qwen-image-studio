@@ -620,19 +620,13 @@ def generate_image(args) -> None:
 
     _qimg.retrieve_timesteps = _rt_no_sigmas
 
-
     # Enable bf16 + native VAE tiling (Diffusers)
-    try:
-        pipe.vae.to(device=device, dtype=torch_dtype)
-        if hasattr(pipe.vae, "enable_tiling"):
-            pipe.vae.enable_tiling()
-        print("VAE: native tiling ENABLED (bf16)")
-    except Exception as e:
-        print(f"VAE: native tiling not available ({e})")
+    pipeline.vae.to(device=device, dtype=torch.bfloat16)
+    if hasattr(pipeline.vae, "enable_tiling"):
+        pipeline.vae.enable_tiling()
+    print(f"EDIT VAE: {pipeline.vae.dtype} {next(pipeline.vae.parameters()).device}")
 
     # ---- DEBUG TIMERS (generate only) ----
-    import time
-
     def _wrap_timed(obj, name, label):
         if not hasattr(type(obj), name):
             return
@@ -879,13 +873,19 @@ def edit_image(args) -> None:
         print(f"Edit VAE: VAE setup failed ({e})")
     
     # Run VAE.encode under bf16 autocast, ensure input matches VAE device
-    _orig_enc = type(pipeline)._encode_vae_image
-    def _encode_vae_image_autocast(self, image, generator):
-        image = image.to(device=self.vae.device, dtype=torch.float32, non_blocking=True).contiguous()
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            return _orig_enc(self, image, generator)
-    pipeline._encode_vae_image = _encode_vae_image_autocast.__get__(pipeline, type(pipeline))
-
+    # Timed + autocast VAE encode
+    _orig_vae_encode = type(pipeline)._encode_vae_image
+    def _vae_encode_timed_autocast(self, image, generator):
+        import time, torch
+        t = time.perf_counter()
+        print("CLI: vae_encode start", flush=True)
+        try:
+            image = image.to(device=self.vae.device, dtype=torch.float32, non_blocking=True).contiguous()
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                return _orig_vae_encode(self, image, generator)
+        finally:
+            print(f"CLI: vae_encode done {time.perf_counter()-t:.2f}s", flush=True)
+    pipeline._encode_vae_image = _vae_encode_timed_autocast.__get__(pipeline, type(pipeline))
 
     # (optional single-line proof)
     print("EDIT VAE:", next(pipeline.vae.parameters()).dtype, next(pipeline.vae.parameters()).device, flush=True)
