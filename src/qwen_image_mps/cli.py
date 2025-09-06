@@ -776,6 +776,34 @@ def edit_image(args) -> None:
     )
     pipeline = pipeline.to(device)
 
+    # ---- DEBUG TIMERS (edit only) ----
+    import time
+
+    def _wrap_timed(obj, name, label):
+        # safe: only wrap if the method exists
+        if not hasattr(type(obj), name):
+            return
+        orig = getattr(type(obj), name)
+        def _timed(self, *args, **kwargs):
+            t = time.perf_counter()
+            print(f"CLI: {label} start", flush=True)
+            try:
+                return orig(self, *args, **kwargs)
+            finally:
+                print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+        setattr(obj, name, _timed.__get__(obj, type(obj)))
+
+    _wrap_timed(pipeline, "encode_prompt", "encode_prompt")
+    _wrap_timed(pipeline, "_encode_vae_image", "vae_encode")
+    _wrap_timed(pipeline.vae, "decode", "vae_decode")
+    _wrap_timed(pipeline.image_processor, "resize", "img_resize")
+    _wrap_timed(pipeline.image_processor, "preprocess", "img_preprocess")
+    _wrap_timed(pipeline.scheduler, "set_timesteps", "set_timesteps")
+    _wrap_timed(pipeline.text_encoder, "forward", "text_encoder_forward")
+    _wrap_timed(pipeline.transformer, "forward", "transformer_forward")
+    # ---- END DEBUG TIMERS ----
+
+
     try:
         pipeline.enable_sdpa()
     except Exception:
@@ -887,24 +915,6 @@ def edit_image(args) -> None:
 
 
     pipeline.set_progress_bar_config(disable=False, leave=True, miniters=1, desc="Denoising")
-
-    import time
-
-    _orig_encode_prompt = pipeline.encode_prompt
-    def _timed_encode_prompt(*a, **k):
-        t = time.perf_counter(); print("CLI: encode_prompt start", flush=True)
-        out = _orig_encode_prompt(*a, **k)
-        print(f"CLI: encode_prompt done in {time.perf_counter()-t:.2f}s", flush=True)
-        return out
-    pipeline.encode_prompt = _timed_encode_prompt.__get__(pipeline, type(pipeline))
-
-    _orig_vae_encode = pipeline._encode_vae_image
-    def _timed_vae_encode(*a, **k):
-        t = time.perf_counter(); print("CLI: vae_encode start", flush=True)
-        out = _orig_vae_encode(*a, **k)
-        print(f"CLI: vae_encode done in {time.perf_counter()-t:.2f}s", flush=True)
-        return out
-    pipeline._encode_vae_image = _timed_vae_encode.__get__(pipeline, type(pipeline))
 
     _print_stage("Invoking edit pipeline")
     _print_stage("Denoising started")
