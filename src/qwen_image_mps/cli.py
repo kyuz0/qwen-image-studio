@@ -862,15 +862,20 @@ def edit_image(args) -> None:
         except Exception:
             pass
 
-    # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
-    # VAE weights fp32, compute via bf16 autocast during encode (fast on ROCm)
-    try:
-        pipeline.vae.to(device=device, dtype=torch.float32)
-        if hasattr(pipeline.vae, "enable_tiling"):
-            pipeline.vae.enable_tiling()
-        print("Edit VAE: fp32 weights + tiling")
-    except Exception as e:
-        print(f"Edit VAE: VAE setup failed ({e})")
+    # ---- VAE: match generate path (fast) ----
+    pipeline.vae.to(device=device, dtype=torch.bfloat16)
+    if hasattr(pipeline.vae, "enable_tiling"):
+        pipeline.vae.enable_tiling()
+    print(f"Edit VAE: {pipeline.vae.dtype} tiling={getattr(pipeline.vae,'use_tiling',None)}")
+
+    # Hard guard: ensure tiling stays ON for decode
+    _orig_decode = type(pipeline.vae).decode
+    def _decode_guard(self, *a, **k):
+        if not getattr(self, "use_tiling", False):
+            self.enable_tiling()
+        return _orig_decode(self, *a, **k)
+    pipeline.vae.decode = _decode_guard.__get__(pipeline.vae, type(pipeline.vae))
+
     
     # Run VAE.encode under bf16 autocast, ensure input matches VAE device
     # Timed + autocast VAE encode
