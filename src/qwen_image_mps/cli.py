@@ -15,6 +15,11 @@ from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
 
+def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
+    scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+    ts = scheduler.timesteps
+    return ts, len(ts)
+
 
 def get_output_dir():
     """Get the default output directory for images."""
@@ -605,6 +610,17 @@ def generate_image(args) -> None:
         device_map=device,
     )
 
+    # Fix FlowMatch: don't pass sigmas to set_timesteps
+    from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
+
+    def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
+        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+        ts = scheduler.timesteps
+        return ts, len(ts)
+
+    _qimg.retrieve_timesteps = _rt_no_sigmas
+
+
     # Enable bf16 + native VAE tiling (Diffusers)
     try:
         pipe.vae.to(device=device, dtype=torch_dtype)
@@ -651,7 +667,6 @@ def generate_image(args) -> None:
     _wrap_timed(pipe.text_encoder, "forward", "text_encoder_forward")
     _wrap_timed(pipe.transformer, "forward", "transformer_forward")
     # ---- END DEBUG TIMERS ----
-
 
     pipe.set_progress_bar_config(
         disable=False,
@@ -811,8 +826,10 @@ def edit_image(args) -> None:
         "Qwen/Qwen-Image-Edit",
         torch_dtype=torch_dtype,
         use_safetensors=True,
+        device_map=device,
     )
-    pipeline = pipeline.to(device)
+    from diffusers.pipelines.qwenimage import pipeline_qwenimage_edit as _qime
+    _qime.retrieve_timesteps = _rt_no_sigmas
 
     # ---- DEBUG TIMERS (edit only) ----
     import time
