@@ -104,12 +104,12 @@ def _resolve_custom_lora(lora_spec: str) -> Optional[str]:
     except Exception:
         return None
 
-# replace the whole _merge_lora_into_pipe with:
+
 def _merge_lora_into_pipe(pipe, lora_path: str, cb):
-    # mirror CLI behavior exactly; progress comes through cb
     _emit(cb, "lora_loading", "Merging LoRA", 0.0)
-    _merge_exact(pipe, lora_path, cb=lambda msg, p=None: _emit(cb, "lora_loading", msg or "Merging", p))
+    _merge_exact(pipe, lora_path)  # exact CLI behavior (GPU)
     _emit(cb, "lora_loading", "Merged", 1.0)
+
 
 # ---- main manager ------------------------------------------------------------
 
@@ -352,13 +352,13 @@ class QwenImageManager:
             _emit(cb, "model_loading", f"Loading base: {model_name}", 0.0)
             if kind == "edit":
                 from diffusers import QwenImageEditPipeline as _Pipe
-                pipe = _Pipe.from_pretrained(model_name, dtype=self._dtype)
+                pipe = _Pipe.from_pretrained(model_name, torch_dtype=self._dtype)
             else:
                 from diffusers import DiffusionPipeline as _Pipe
-                pipe = _Pipe.from_pretrained(model_name, dtype=self._dtype)
+                pipe = _Pipe.from_pretrained(model_name, torch_dtype=self._dtype)
 
             _emit(cb, "pipeline_loading", "Moving to device", None)
-            pipe = pipe.to(self._device)
+            pipe = pipe.to(self._device, dtype=self._dtype)
 
             # VAE settings (bf16 + tiling if available). Keep on device.
             try:
