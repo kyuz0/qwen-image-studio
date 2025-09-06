@@ -621,10 +621,13 @@ def generate_image(args) -> None:
     _qimg.retrieve_timesteps = _rt_no_sigmas
 
     # Enable bf16 + native VAE tiling (Diffusers)
-    pipeline.vae.to(device=device, dtype=torch.bfloat16)
-    if hasattr(pipeline.vae, "enable_tiling"):
-        pipeline.vae.enable_tiling()
-    print(f"EDIT VAE: {pipeline.vae.dtype} {next(pipeline.vae.parameters()).device}")
+    try:
+        pipe.vae.to(device=device, dtype=torch_dtype)
+        if hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+        print("VAE: native tiling ENABLED (bf16)")
+    except Exception as e:
+        print(f"VAE: native tiling not available ({e})")
 
     # ---- DEBUG TIMERS (generate only) ----
     def _wrap_timed(obj, name, label):
