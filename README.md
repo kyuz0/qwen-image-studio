@@ -8,7 +8,6 @@ A WebUI and job manager for [**qwen-image-mps**](https://github.com/ivanfioravan
 * **Browser UI** (`qwen-image-studio/static/`) with live job tracking and GPU stats
 * **Improved CLI** (still available):
 
-  * `--no-mmap` flag to disable memory mapping
   * LoRA adapters merged with **PyTorch on GPU**
   * More verbose, structured CLI output for server integration
 
@@ -47,7 +46,6 @@ See the [**full README of qwen-image-mps**](https://github.com/ivanfioravanti/qw
 
 Additional flags in this fork:
 
-* `--no-mmap` → disable memory-mapped model loading
 * `--lora <path|HF repo>` → LoRA adapters loaded on GPU via PyTorch
 
 ---

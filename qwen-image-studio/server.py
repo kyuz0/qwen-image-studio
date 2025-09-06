@@ -117,7 +117,7 @@ def now_iso() -> str:
 def build_command(job: dict) -> List[str]:
     t = job["type"]
     p = job["params"]
-    cmd = [PYTHON_BIN, str(CLI_PATH), "--no-mmap"]
+    cmd = [PYTHON_BIN, str(CLI_PATH)]
     if t == "generate":
         cmd += ["generate", "-p", p["prompt"]]
         if p.get("steps"):
