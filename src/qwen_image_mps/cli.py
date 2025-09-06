@@ -12,6 +12,9 @@ from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 
+import torch
+torch.set_grad_enabled(False)
+
 def get_output_dir():
     """Get the default output directory for images."""
     output_dir = Path.home() / ".qwen-image-studio"
@@ -610,7 +613,7 @@ def generate_image(args) -> None:
 
     _print_stage(f"Loading base pipeline: {model_name} (dtype={torch_dtype})")
     pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
-    pipe = pipe.to(device)
+    pipe = pipe.to(self._device, dtype=self._dtype)
 
     # Enable bf16 + native VAE tiling (Diffusers)
     try:
@@ -777,7 +780,7 @@ def edit_image(args) -> None:
     pipeline = QwenImageEditPipeline.from_pretrained(
         "Qwen/Qwen-Image-Edit", torch_dtype=torch_dtype
     )
-    pipeline = pipeline.to(device)
+    pipeline = pipeline.to(self._device, dtype=self._dtype)    
     # Enable bf16 + native VAE tiling (Diffusers) for edit pipeline
     try:
         pipeline.vae.to(device=device, dtype=torch_dtype)

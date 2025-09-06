@@ -13,6 +13,8 @@ from typing import Callable, Optional, List, Literal, Tuple, Dict
 from contextlib import contextmanager
 from threading import Lock
 
+from qwen_image_mps.cli import merge_lora_from_safetensors as _merge_exact
+
 # ---- public types ------------------------------------------------------------
 
 Stage = Literal["model_loading", "pipeline_loading", "lora_loading", "generation"]
@@ -52,8 +54,8 @@ def _get_device_and_dtype() -> Tuple[str, "torch.dtype"]:
 
 def _generator_for(device: str, seed: int):
     import torch
-    gen_device = "cpu" if device == "mps" else device
-    return torch.Generator(device=gen_device).manual_seed(int(seed))
+    return torch.Generator(device=("cuda" if torch.cuda.is_available() else device)).manual_seed(int(seed))
+
 
 # ---- LoRA utilities (Lightning + custom) -------------------------------------
 
@@ -102,138 +104,11 @@ def _resolve_custom_lora(lora_spec: str) -> Optional[str]:
     except Exception:
         return None
 
-def _merge_lora_into_pipe(pipe, lora_path: str, cb: Optional[ProgressCB]) -> None:
-    """
-    In-place weight merge. Irreversible (reload base to switch).
-    Tries several common LoRA formats (diffusers / A-B / .lora.up/.down).
-    """
-    import safetensors.torch as st
-    import torch
-
-    state = st.load_file(lora_path) if hasattr(st, "load_file") else st.load(open(lora_path, "rb").read())
-    transformer = getattr(pipe, "transformer", None) or getattr(pipe, "unet", None)
-    if transformer is None:
-        raise RuntimeError("Could not find pipe.transformer/unet to merge LoRA into")
-
-    keys = set(state.keys())
-    uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
-    uses_diff = any(k.startswith("lora_unet_") for k in keys)
-    uses_ab  = any(".lora_A" in k or ".lora_B" in k for k in keys)
-
-    def _diff2tx(k: str) -> str:
-        k = k.replace("lora_unet_", "")
-        k = re.sub(r"transformer_blocks_(\d+)", r"transformer_blocks.\1", k)
-        rep = {
-            "_attn_add_k_proj": ".attn.add_k_proj",
-            "_attn_add_q_proj": ".attn.add_q_proj",
-            "_attn_add_v_proj": ".attn.add_v_proj",
-            "_attn_to_add_out": ".attn.to_add_out",
-            "_ff_context_mlp_fc1": ".ff_context.net.0",
-            "_ff_context_mlp_fc2": ".ff_context.net.2",
-            "_ff_mlp_fc1": ".ff.net.0",
-            "_ff_mlp_fc2": ".ff.net.2",
-            "_attn_to_k": ".attn.to_k",
-            "_attn_to_q": ".attn.to_q",
-            "_attn_to_v": ".attn.to_v",
-            "_attn_to_out_0": ".attn.to_out.0",
-        }
-        for a, b in rep.items(): k = k.replace(a, b)
-        return k
-
-    def _device_merge(param, down, up, scaling: float):
-        dev = param.device
-        up   = up.to(device=dev, dtype=torch.float32)
-        down = down.to(device=dev, dtype=torch.float32)
-        delta = torch.matmul(up, down) * float(scaling)
-        param.data.add_(delta.to(dtype=param.data.dtype))
-
-    # Dry count
-    def _count() -> int:
-        cnt = 0
-        if uses_ab:
-            for name, _ in transformer.named_parameters():
-                base = name[:-7] if name.endswith(".weight") else name
-                a1, b1 = f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"
-                a2, b2 = f"{base}.lora_A.weight", f"{base}.lora_B.weight"
-                if (a1 in keys and b1 in keys) or (a2 in keys and b2 in keys):
-                    cnt += 1
-        elif uses_diff:
-            bases: Dict[str, set] = {}
-            for k in keys:
-                if not k.startswith("lora_unet_"): continue
-                base = _diff2tx(k.replace(".lora_down.weight","").replace(".lora_up.weight","").replace(".alpha",""))
-                bases.setdefault(base, set()).add(k)
-            for name, _ in transformer.named_parameters():
-                base = name[:-7] if name.endswith(".weight") else name
-                ks = bases.get(base)
-                if not ks: continue
-                has_down = any(k.endswith(".lora_down.weight") for k in ks)
-                has_up   = any(k.endswith(".lora_up.weight")   for k in ks)
-                if has_down and has_up: cnt += 1
-        else:
-            for name, _ in transformer.named_parameters():
-                base = name[:-7] if name.endswith(".weight") else name
-                if uses_dot:
-                    kd = f"transformer.{base}.lora.down.weight"
-                    ku = f"transformer.{base}.lora.up.weight"
-                    if kd not in keys:
-                        kd = f"{base}.lora.down.weight"
-                        ku = f"{base}.lora.up.weight"
-                else:
-                    kd = f"{base}.lora_down.weight"
-                    ku = f"{base}.lora_up.weight"
-                if kd in keys and ku in keys: cnt += 1
-        return cnt
-
-    total = max(1, _count())
-    merged = 0
+# replace the whole _merge_lora_into_pipe with:
+def _merge_lora_into_pipe(pipe, lora_path: str, cb):
+    # mirror CLI behavior exactly; progress comes through cb
     _emit(cb, "lora_loading", "Merging LoRA", 0.0)
-
-    def _bump():
-        nonlocal merged
-        merged += 1
-        _emit(cb, "lora_loading", "Merging LoRA", min(1.0, merged / total))
-
-    # Actual merge
-    if uses_ab:
-        for name, param in transformer.named_parameters():
-            base = name[:-7] if name.endswith(".weight") else name
-            for a, b in (
-                (f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"),
-                (f"{base}.lora_A.weight",                f"{base}.lora_B.weight"),
-            ):
-                if a in state and b in state:
-                    _device_merge(param, state[a], state[b], float(state.get(f"{base}.alpha", 1.0)))
-                    _bump()
-                    break
-    elif uses_diff:
-        # collect pairs
-        pairs: Dict[str, Tuple[str, str]] = {}
-        for k in keys:
-            if not k.startswith("lora_unet_"): continue
-            base = _diff2tx(k.replace(".lora_down.weight","").replace(".lora_up.weight","").replace(".alpha",""))
-            dn = f"lora_unet_{base}.lora_down.weight"
-            up = f"lora_unet_{base}.lora_up.weight"
-            if dn in keys and up in keys:
-                pairs[base] = (dn, up)
-        for name, param in transformer.named_parameters():
-            base = name[:-7] if name.endswith(".weight") else name
-            if base in pairs:
-                dn, up = pairs[base]
-                _device_merge(param, state[dn], state[up], float(state.get(f"{base}.alpha", 1.0)))
-                _bump()
-    else:
-        for name, param in transformer.named_parameters():
-            base = name[:-7] if name.endswith(".weight") else name
-            kd, ku = (f"{base}.lora_down.weight", f"{base}.lora_up.weight")
-            if uses_dot:
-                kd, ku = (f"{base}.lora.down.weight", f"{base}.lora.up.weight")
-                if kd not in keys:
-                    kd, ku = (f"transformer.{base}.lora.down.weight", f"transformer.{base}.lora.up.weight")
-            if kd in keys and ku in keys:
-                _device_merge(param, state[kd], state[ku], float(state.get(f"{base}.alpha", 1.0)))
-                _bump()
-
+    _merge_exact(pipe, lora_path, cb=lambda msg, p=None: _emit(cb, "lora_loading", msg or "Merging", p))
     _emit(cb, "lora_loading", "Merged", 1.0)
 
 # ---- main manager ------------------------------------------------------------
@@ -520,12 +395,8 @@ class QwenImageManager:
         if self._pipe is None:
             return
         try:
-            # Drop reference and free VRAM
             import torch
-            try:
-                self._pipe.to("cpu")
-            except Exception:
-                pass
+            # drop refs; let ROCm free VRAM
             self._pipe = None
             self._state = None
             if torch.cuda.is_available():
