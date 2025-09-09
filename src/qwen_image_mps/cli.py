@@ -612,15 +612,15 @@ def generate_image(args) -> None:
     )
 
     try:
-        pipe.set_attn_processor(FlashAttention2Processor())
-        print("ATTN: FlashAttention2 enabled")
-    except Exception as e:
-        print(f"ATTN: FA2 unavailable ({e}); falling back to SDPA")
+        from diffusers.models.attention_processor import FlashAttention2Processor as _FA2
+        pipe.set_attn_processor(_FA2()); print("ATTN: FA2 (diffusers)")
+    except Exception as e1:
         try:
-            pipe.enable_sdpa()
-            print("ATTN: SDPA enabled")
+            from flash_attn.diffusers.attention_processor import FlashAttnProcessor2 as _FA2
+            pipe.set_attn_processor(_FA2()); print("ATTN: FA2 (flash_attn)")
         except Exception as e2:
-            print(f"ATTN: using default attention ({e2})")
+            pipe.enable_sdpa(); print(f"ATTN: SDPA fallback ({e1} / {e2})")
+
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
