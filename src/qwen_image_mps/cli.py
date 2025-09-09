@@ -754,8 +754,11 @@ def generate_image(args) -> None:
         model_name,
         torch_dtype=torch_dtype,
         use_safetensors=True,
-        device_map=device,
+        device_map=None,          # load on CPU
+        low_cpu_mem_usage=False,  # disable memmap/sliced GPU placement
     )
+    pipe.to(device=device, dtype=torch_dtype)  # single move to GPU
+
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
