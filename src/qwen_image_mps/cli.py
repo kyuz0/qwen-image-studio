@@ -610,10 +610,9 @@ def generate_image(args) -> None:
         device_map=device,
     )
 
-    from diffusers.models.attention_processor import AttnProcessor2_0
-    pipe.set_attn_processor(AttnProcessor2_0())
     torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False)
-    print("ATTN: SDPA flash enabled")
+    print("ATTN: PyTorch SDPA (flash) enabled")
+
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
