@@ -25,20 +25,32 @@ LORA_DBG       = os.getenv("QWEN_LORA_MERGE_DEBUG", "0") in {"1","true","TRUE"}
 
 # --- FlashAttention shim (env-toggle) ---
 if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
+    import os, atexit
+    import torch
+    import torch.nn.functional as F
+
     try:
         from flash_attn.flash_attn_interface import flash_attn_func as _fa
     except Exception:
         _fa = None
+
     _orig = F.scaled_dot_product_attention
-    _dbg = os.getenv("QWEN_FA_DEBUG")
-    _fa_blacklist = set()  # (H, T, D, dtype)
+    _dbg  = os.getenv("QWEN_FA_DEBUG")
+    # Allow-list of head dims; default only 64. Set QWEN_FA_DIMS="64,128" to widen.
+    _allowed_dims = {int(x) for x in os.getenv("QWEN_FA_DIMS", "64").split(",") if x.strip()}
+    # Optional sync to surface faults immediately (OFF by default)
+    _sync = os.getenv("QWEN_FA_SYNC", "0") in {"1","true","TRUE","yes"}
+
+    _fa_blacklist = set()   # (H, T, D, dtype)
+    _fa_hits = 0
+    _fa_fallbacks = 0
 
     def _sig(q):
-        # q shape is [B, H, T, D] for SDPA; we transpose for FA
         H, T, D = int(q.shape[1]), int(q.shape[2]), int(q.shape[-1])
         return (H, T, D, str(q.dtype))
 
     def _sdpa_fa(*args, **kw):
+        nonlocal _fa_hits, _fa_fallbacks
         q = kw.get("query", args[0] if args else None)
         k = kw.get("key",   args[1] if len(args) > 1 else None)
         v = kw.get("value", args[2] if len(args) > 2 else None)
@@ -54,7 +66,7 @@ if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
             and not is_causal
             and q is not None and k is not None and v is not None
             and q.dtype in (torch.float16, torch.bfloat16)
-            and q.shape[-1] == 64             # <- only 64 for now
+            and q.shape[-1] in _allowed_dims
             and q.is_cuda and k.is_cuda and v.is_cuda
             and q.shape[1] == k.shape[1] == v.shape[1]
             and _sig(q) not in _fa_blacklist
@@ -72,18 +84,26 @@ if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
                     softmax_scale=scale,
                     causal=False,
                 ).transpose(1, 2)
-                # force surfacing device errors here, not later
-                torch.cuda.synchronize()
+                if _sync:
+                    torch.cuda.synchronize()
                 if _dbg: print("ATTN: FA")
+                _fa_hits += 1
                 return out
             except Exception as e:
                 _fa_blacklist.add(_sig(q))
+                _fa_fallbacks += 1
                 if _dbg: print(f"ATTN: FA -> SDPA fallback ({e}); blacklisted {_sig(q)}")
 
         if _dbg: print("ATTN: SDPA")
         return _orig(*args, **kw)
 
     F.scaled_dot_product_attention = _sdpa_fa
+    if _dbg:
+        def _report():
+            print(f"ATTN: FA summary hits={_fa_hits} fallbacks={_fa_fallbacks} "
+                  f"blacklisted={len(_fa_blacklist)} allow={sorted(_allowed_dims)} sync={_sync}")
+        atexit.register(_report)
+
     print("ATTN: FA shim ON")
 else:
     print("ATTN: FA shim OFF")
