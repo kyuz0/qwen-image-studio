@@ -610,9 +610,7 @@ def generate_image(args) -> None:
         device_map=device,
     )
 
-    import torch
     from diffusers.models.attention_processor import AttnProcessor2
-
     try:
         from diffusers.models.attention_processor import FlashAttention2Processor as _FA2
         pipe.set_attn_processor(_FA2()); print("ATTN: FA2 (diffusers)")
@@ -620,6 +618,7 @@ def generate_image(args) -> None:
         pipe.set_attn_processor(AttnProcessor2()); print(f"ATTN: SDPA via AttnProcessor2 [{e1}]")
 
     torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False)
+
 
 
 
