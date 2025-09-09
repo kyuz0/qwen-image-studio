@@ -964,9 +964,19 @@ def edit_image(args) -> None:
 
     _qime.retrieve_timesteps = _rt_no_sigmas
 
-    # ---- DEBUG TIMERS (edit only) ----
-    import time
+    # ---- Make encoding use SPDA MATH path (edit only) ----
+    from torch.nn.attention import sdpa_kernel, SDPBackend
 
+    orig_encode = pipeline.encode_prompt
+    def _encode_with_math(*a, **k):
+        with sdpa_kernel(SDPBackend.MATH):
+            return orig_encode(*a, **k)
+
+    pipeline.encode_prompt = _encode_with_math
+    print("EDIT: text encoder -> SDPA MATH")
+    # -------------------------------------------------- #
+
+    # ---- DEBUG TIMERS (edit only) ----
     def _wrap_timed(obj, name, label):
         # safe: only wrap if the method exists
         if not hasattr(type(obj), name):
