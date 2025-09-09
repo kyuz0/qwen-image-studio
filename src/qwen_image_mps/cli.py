@@ -15,7 +15,7 @@ from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
 
-# --- SDPA → FlashAttention shim (kwargs-only fallback) ---
+# SDPA → FlashAttention shim (no-arg-mutation fallback)
 import torch, torch.nn.functional as F
 try:
     from flash_attn.flash_attn_interface import flash_attn_func as _fa
@@ -24,37 +24,29 @@ except Exception:
 _orig_sdpa = F.scaled_dot_product_attention
 
 def _sdpa_fa(*args, **kw):
-    # normalize + POP to avoid duplicates
-    q = kw.pop("query", args[0] if len(args)>0 else None)
-    k = kw.pop("key",   args[1] if len(args)>1 else None)
-    v = kw.pop("value", args[2] if len(args)>2 else None)
-    attn_mask = kw.pop("attn_mask", kw.pop("attention_mask", None))
-    dropout_p = kw.pop("dropout_p", 0.0)
-    is_causal = kw.pop("is_causal", False)
-    scale     = kw.pop("scale", kw.pop("softmax_scale", None))
-    # unsupported features → fallback
-    if kw.pop("enable_gqa", None) or kw.pop("deterministic", None) or kw.pop("custom_mask_type", None):
-        return _orig_sdpa(query=q, key=k, value=v, attn_mask=attn_mask,
-                          dropout_p=dropout_p, is_causal=is_causal, scale=scale)
-    # try FA when safe
-    try:
-        if (_fa is not None and attn_mask is None and dropout_p == 0.0 and not is_causal and
-            q is not None and k is not None and v is not None and
-            q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
-            q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]):
-            if scale is None: scale = (q.shape[-1] ** -0.5)
-            q2,k2,v2 = (t.transpose(1,2).contiguous() for t in (q,k,v))    # (B,N,H,D)
-            out = _fa(q2,k2,v2, dropout_p=0.0, softmax_scale=scale, causal=False)
-            return out.transpose(1,2)                                       # (B,H,N,D)
-    except Exception:
-        pass
-    # clean fallback (KWARGS ONLY)
-    return _orig_sdpa(query=q, key=k, value=v, attn_mask=attn_mask,
-                      dropout_p=dropout_p, is_causal=is_causal, scale=scale)
+    oargs, okw = args, dict(kw)  # keep originals
+    # extract q,k,v only for FA fast-path check
+    q = kw.get("query", args[0] if len(args)>0 else None)
+    k = kw.get("key",   args[1] if len(args)>1 else None)
+    v = kw.get("value", args[2] if len(args)>2 else None)
+    attn_mask = kw.get("attn_mask", kw.get("attention_mask", None))
+    dropout_p = kw.get("dropout_p", 0.0)
+    is_causal = kw.get("is_causal", False)
+    scale     = kw.get("scale", kw.get("softmax_scale", None))
+    # only route trivial cases to FA; otherwise call original unmodified
+    if (_fa is not None and attn_mask is None and dropout_p==0.0 and not is_causal and
+        q is not None and k is not None and v is not None and
+        q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
+        q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]):
+        if scale is None: scale = (q.shape[-1] ** -0.5)
+        q2,k2,v2 = (t.transpose(1,2).contiguous() for t in (q,k,v))  # (B,N,H,D)
+        out = _fa(q2,k2,v2, dropout_p=0.0, softmax_scale=scale, causal=False)
+        return out.transpose(1,2)                                     # (B,H,N,D)
+    return _orig_sdpa(*oargs, **okw)
 
 F.scaled_dot_product_attention = _sdpa_fa
 print("ATTN: SDPA→FlashAttention shim active")
-# ---------------------------------------------------------
+
 
 
 
