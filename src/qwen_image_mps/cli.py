@@ -31,46 +31,56 @@ if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
         _fa = None
     _orig = F.scaled_dot_product_attention
     _dbg = os.getenv("QWEN_FA_DEBUG")
+    _fa_blacklist = set()  # (H, T, D, dtype)
+
+    def _sig(q):
+        # q shape is [B, H, T, D] for SDPA; we transpose for FA
+        H, T, D = int(q.shape[1]), int(q.shape[2]), int(q.shape[-1])
+        return (H, T, D, str(q.dtype))
 
     def _sdpa_fa(*args, **kw):
         q = kw.get("query", args[0] if args else None)
-        k = kw.get("key", args[1] if len(args) > 1 else None)
+        k = kw.get("key",   args[1] if len(args) > 1 else None)
         v = kw.get("value", args[2] if len(args) > 2 else None)
         attn_mask = kw.get("attn_mask", kw.get("attention_mask"))
         dropout_p = kw.get("dropout_p", 0.0)
         is_causal = kw.get("is_causal", False)
         scale = kw.get("scale", kw.get("softmax_scale"))
+
         use_fa = (
             _fa is not None
             and attn_mask is None
             and dropout_p == 0.0
             and not is_causal
-            and q is not None
-            and k is not None
-            and v is not None
+            and q is not None and k is not None and v is not None
             and q.dtype in (torch.float16, torch.bfloat16)
-            and q.shape[-1] in (64, 128)
-            and q.is_cuda
-            and k.is_cuda
-            and v.is_cuda
+            and q.shape[-1] == 64             # <- only 64 for now
+            and q.is_cuda and k.is_cuda and v.is_cuda
             and q.shape[1] == k.shape[1] == v.shape[1]
+            and _sig(q) not in _fa_blacklist
         )
+
         if use_fa:
-            if scale is None:
-                scale = q.shape[-1] ** -0.5
-            o = _fa(
-                q.transpose(1, 2).contiguous(),
-                k.transpose(1, 2).contiguous(),
-                v.transpose(1, 2).contiguous(),
-                dropout_p=0.0,
-                softmax_scale=scale,
-                causal=False,
-            ).transpose(1, 2)
-            if _dbg:
-                print("ATTN: FA")
-            return o
-        if _dbg:
-            print("ATTN: SDPA")
+            try:
+                if scale is None:
+                    scale = q.shape[-1] ** -0.5
+                out = _fa(
+                    q.transpose(1, 2).contiguous(),
+                    k.transpose(1, 2).contiguous(),
+                    v.transpose(1, 2).contiguous(),
+                    dropout_p=0.0,
+                    softmax_scale=scale,
+                    causal=False,
+                ).transpose(1, 2)
+                # force surfacing device errors here, not later
+                torch.cuda.synchronize()
+                if _dbg: print("ATTN: FA")
+                return out
+            except Exception as e:
+                _fa_blacklist.add(_sig(q))
+                if _dbg: print(f"ATTN: FA -> SDPA fallback ({e}); blacklisted {_sig(q)}")
+
+        if _dbg: print("ATTN: SDPA")
         return _orig(*args, **kw)
 
     F.scaled_dot_product_attention = _sdpa_fa
