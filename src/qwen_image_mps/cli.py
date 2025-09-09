@@ -391,7 +391,8 @@ def merge_lora_from_safetensors(pipe, lora_path):
         )
 
     target_device = str(next(transformer.parameters()).device)
-    lora_state = st.load_file(lora_path, device=target_device)
+    cpu = torch.device("cpu")
+    lora_state = st.load_file(lora_path, device=cpu)
 
     keys = set(lora_state.keys())
     uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
@@ -420,11 +421,12 @@ def merge_lora_from_safetensors(pipe, lora_path):
         return key
 
     def _device_merge(param, lora_down, lora_up, scaling: float):
-        device = param.device
-        lora_up = lora_up.to(device=device, dtype=torch.float32)
-        lora_down = lora_down.to(device=device, dtype=torch.float32)
-        delta_W = torch.matmul(lora_up, lora_down) * float(scaling)
-        param.data.add_(delta_W.to(dtype=param.data.dtype))
+        with torch.no_grad():
+            # CPU fp32 matmul, then one move to param device/dtype
+            up_cpu   = lora_up.to("cpu", dtype=torch.float32, non_blocking=False)
+            down_cpu = lora_down.to("cpu", dtype=torch.float32, non_blocking=False)
+            delta_W  = (up_cpu @ down_cpu) * float(scaling)
+            param.data.add_(delta_W.to(device=param.device, dtype=param.dtype, non_blocking=False))
 
     _print_stage("LoRA merge: scanning model…")
 
