@@ -610,17 +610,10 @@ def generate_image(args) -> None:
         device_map=device,
     )
 
-    from diffusers.models.attention_processor import AttnProcessor2
-    try:
-        from diffusers.models.attention_processor import FlashAttention2Processor as _FA2
-        pipe.set_attn_processor(_FA2()); print("ATTN: FA2 (diffusers)")
-    except Exception as e1:
-        pipe.set_attn_processor(AttnProcessor2()); print(f"ATTN: SDPA via AttnProcessor2 [{e1}]")
-
+    from diffusers.models.attention_processor import AttnProcessor2_0
+    pipe.set_attn_processor(AttnProcessor2_0())
     torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False)
-
-
-
+    print("ATTN: SDPA flash enabled")
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
