@@ -391,8 +391,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
         )
 
     target_device = str(next(transformer.parameters()).device)
-    cpu = torch.device("cpu")
-    lora_state = st.load_file(lora_path, device=cpu)
+    lora_state = st.load_file(lora_path, device="cpu")
 
     keys = set(lora_state.keys())
     uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
