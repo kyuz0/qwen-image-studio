@@ -15,6 +15,33 @@ from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
 
+# --- SDPA -> FlashAttention shim (only when safe) ---
+import torch
+import torch.nn.functional as F
+from flash_attn.flash_attn_interface import flash_attn_func as _fa
+_orig_sdpa = F.scaled_dot_product_attention
+
+def _sdpa_fa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
+    try:
+        # only fp16/bf16, no mask, no dropout, no causal, head_dim in {64,128}
+        if (attn_mask is None and dropout_p == 0.0 and not is_causal and
+            q.dtype in (torch.float16, torch.bfloat16) and
+            q.shape[-1] in (64, 128) and
+            q.is_cuda and k.is_cuda and v.is_cuda):
+            # SDPA uses (B, H, N, D); FA expects (B, N, H, D)
+            q2, k2, v2 = (x.transpose(1, 2).contiguous() for x in (q, k, v))
+            out = _fa(q2, k2, v2, dropout_p=0.0, softmax_scale=scale, causal=False)
+            return out.transpose(1, 2)  # back to (B, H, N, D)
+    except Exception:
+        pass
+    return _orig_sdpa(q, k, v, attn_mask=attn_mask, dropout_p=dropout_p,
+                      is_causal=is_causal, scale=scale)
+
+F.scaled_dot_product_attention = _sdpa_fa
+print("ATTN: SDPA→FlashAttention shim active")
+# -------------------------------------------
+
+
 def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
     ts = scheduler.timesteps
