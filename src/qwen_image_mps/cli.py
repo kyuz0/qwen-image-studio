@@ -15,40 +15,46 @@ from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
 
-# SDPA → FlashAttention shim (no-arg-mutation fallback)
-import torch, torch.nn.functional as F
-try:
-    from flash_attn.flash_attn_interface import flash_attn_func as _fa
-except Exception:
-    _fa = None
-_orig_sdpa = F.scaled_dot_product_attention
+# --- FlashAttention shim (env-toggle) ---
+import os, torch, torch.nn.functional as F
+if os.getenv("QWEN_FA_SHIM", "0") in {"1","true","TRUE","yes"}:
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func as _fa
+    except Exception:
+        _fa = None
+    _orig = F.scaled_dot_product_attention
+    _dbg  = os.getenv("QWEN_FA_DEBUG")
 
-def _sdpa_fa(*args, **kw):
-    oargs, okw = args, dict(kw)  # keep originals
-    # extract q,k,v only for FA fast-path check
-    q = kw.get("query", args[0] if len(args)>0 else None)
-    k = kw.get("key",   args[1] if len(args)>1 else None)
-    v = kw.get("value", args[2] if len(args)>2 else None)
-    attn_mask = kw.get("attn_mask", kw.get("attention_mask", None))
-    dropout_p = kw.get("dropout_p", 0.0)
-    is_causal = kw.get("is_causal", False)
-    scale     = kw.get("scale", kw.get("softmax_scale", None))
-    # only route trivial cases to FA; otherwise call original unmodified
-    if (_fa is not None and attn_mask is None and dropout_p==0.0 and not is_causal and
-        q is not None and k is not None and v is not None and
-        q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
-        q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]):
-        if scale is None: scale = (q.shape[-1] ** -0.5)
-        q2,k2,v2 = (t.transpose(1,2).contiguous() for t in (q,k,v))  # (B,N,H,D)
-        out = _fa(q2,k2,v2, dropout_p=0.0, softmax_scale=scale, causal=False)
-        return out.transpose(1,2)                                     # (B,H,N,D)
-    return _orig_sdpa(*oargs, **okw)
+    def _sdpa_fa(*args, **kw):
+        q = kw.get("query", args[0] if args else None)
+        k = kw.get("key",   args[1] if len(args)>1 else None)
+        v = kw.get("value", args[2] if len(args)>2 else None)
+        attn_mask = kw.get("attn_mask", kw.get("attention_mask"))
+        dropout_p = kw.get("dropout_p", 0.0)
+        is_causal = kw.get("is_causal", False)
+        scale     = kw.get("scale", kw.get("softmax_scale"))
+        use_fa = (
+            _fa is not None and attn_mask is None and dropout_p==0.0 and not is_causal and
+            q is not None and k is not None and v is not None and
+            q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
+            q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]
+        )
+        if use_fa:
+            if scale is None: scale = (q.shape[-1] ** -0.5)
+            o = _fa(q.transpose(1,2).contiguous(),
+                    k.transpose(1,2).contiguous(),
+                    v.transpose(1,2).contiguous(),
+                    dropout_p=0.0, softmax_scale=scale, causal=False).transpose(1,2)
+            if _dbg: print("ATTN: FA")
+            return o
+        if _dbg: print("ATTN: SDPA")
+        return _orig(*args, **kw)
 
-F.scaled_dot_product_attention = _sdpa_fa
-print("ATTN: SDPA→FlashAttention shim active")
-
-
-
+    F.scaled_dot_product_attention = _sdpa_fa
+    print("ATTN: FA shim ON")
+else:
+    print("ATTN: FA shim OFF")
+# ----------------------------------------
 
 def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
@@ -644,10 +650,6 @@ def generate_image(args) -> None:
         use_safetensors=True,
         device_map=device,
     )
-
-    torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False)
-    print("ATTN: PyTorch SDPA (flash) enabled")
-
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
