@@ -14,7 +14,6 @@ from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
-from diffusers.models.attention_processor import FlashAttention2Processor
 
 def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
