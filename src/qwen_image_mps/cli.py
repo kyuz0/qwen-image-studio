@@ -14,6 +14,7 @@ from threading import Event, Thread
 from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
+from diffusers.models.attention_processor import FlashAttention2Processor
 
 def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
@@ -609,6 +610,17 @@ def generate_image(args) -> None:
         use_safetensors=True,
         device_map=device,
     )
+
+    try:
+        pipe.set_attn_processor(FlashAttention2Processor())
+        print("ATTN: FlashAttention2 enabled")
+    except Exception as e:
+        print(f"ATTN: FA2 unavailable ({e}); falling back to SDPA")
+        try:
+            pipe.enable_sdpa()
+            print("ATTN: SDPA enabled")
+        except Exception as e2:
+            print(f"ATTN: using default attention ({e2})")
 
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
