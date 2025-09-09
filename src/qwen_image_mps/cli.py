@@ -15,42 +15,40 @@ from PIL.PngImagePlugin import PngInfo
 from pathlib import Path
 import safetensors.torch as _st
 
-# --- SDPA → FlashAttention shim (kwargs-safe) ---
+# --- SDPA → FlashAttention shim (robust) ---
 import torch, torch.nn.functional as F
 from flash_attn.flash_attn_interface import flash_attn_func as _fa
 _orig_sdpa = F.scaled_dot_product_attention
 
 def _sdpa_fa(*args, **kw):
-    # normalize SDPA signature
+    # normalize + POP to avoid duplicates
     q = kw.pop("query", args[0] if len(args)>0 else None)
     k = kw.pop("key",   args[1] if len(args)>1 else None)
     v = kw.pop("value", args[2] if len(args)>2 else None)
-    attn_mask = kw.get("attn_mask", args[3] if len(args)>3 else None)
-    dropout_p = kw.get("dropout_p", args[4] if len(args)>4 else 0.0)
-    is_causal = kw.get("is_causal", args[5] if len(args)>5 else False)
-    scale = kw.get("scale", kw.get("softmax_scale", None))
+    attn_mask = kw.pop("attn_mask", kw.pop("attention_mask", args[3] if len(args)>3 else None))
+    dropout_p = kw.pop("dropout_p", args[4] if len(args)>4 else 0.0)
+    is_causal = kw.pop("is_causal", args[5] if len(args)>5 else False)
+    scale     = kw.pop("scale", kw.pop("softmax_scale", None))
+    # drop extras the torch op won't accept
+    kw.pop("enable_gqa", None); kw.pop("deterministic", None); kw.pop("custom_mask_type", None)
 
-    # bail on unsupported features
-    if kw.get("enable_gqa") or kw.get("deterministic") or kw.get("custom_mask_type") is not None:
-        return _orig_sdpa(query=q, key=k, value=v, attn_mask=attn_mask,
-                          dropout_p=dropout_p, is_causal=is_causal, scale=scale, **kw)
     try:
         if (attn_mask is None and dropout_p == 0.0 and not is_causal and
             q is not None and k is not None and v is not None and
             q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
             q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]):
-            # SDPA (B,H,N,D) -> FA (B,N,H,D)
-            q2,k2,v2 = (t.transpose(1,2).contiguous() for t in (q,k,v))
+            q2,k2,v2 = (t.transpose(1,2).contiguous() for t in (q,k,v))   # (B,N,H,D)
             out = _fa(q2,k2,v2, dropout_p=0.0, softmax_scale=scale, causal=False)
-            return out.transpose(1,2)
+            return out.transpose(1,2)                                      # (B,H,N,D)
     except Exception:
         pass
-    return _orig_sdpa(query=q, key=k, value=v, attn_mask=attn_mask,
-                      dropout_p=dropout_p, is_causal=is_causal, scale=scale, **kw)
+    # clean fallback (no duplicate kwargs)
+    return _orig_sdpa(q,k,v, attn_mask, dropout_p, is_causal, scale)
 
 F.scaled_dot_product_attention = _sdpa_fa
 print("ATTN: SDPA→FlashAttention shim active")
-# -----------------------------------------
+# ------------------------------------------
+
 
 def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
