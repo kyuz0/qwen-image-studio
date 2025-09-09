@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Thread
+import traceback
 
 import safetensors.torch as _st
 import torch
@@ -17,6 +18,10 @@ import torch.nn.functional
 import torch.nn.functional as F
 import tqdm.auto as tqdm_auto
 from PIL.PngImagePlugin import PngInfo
+
+LORA_MERGE_DEV = os.getenv("QWEN_LORA_MERGE_DEVICE", "cpu").lower()  # cpu|cuda|auto
+LORA_FALLBACK  = os.getenv("QWEN_LORA_MERGE_FALLBACK", "1") not in {"0","false","FALSE"}
+LORA_DBG       = os.getenv("QWEN_LORA_MERGE_DEBUG", "0") in {"1","true","TRUE"}
 
 # --- FlashAttention shim (env-toggle) ---
 if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
@@ -420,12 +425,30 @@ def merge_lora_from_safetensors(pipe, lora_path):
         return key
 
     def _device_merge(param, lora_down, lora_up, scaling: float):
+        dev = param.device
+        try_gpu = (LORA_MERGE_DEV in {"cuda","auto"}) and param.is_cuda
+
         with torch.no_grad():
-            # CPU fp32 matmul, then one move to param device/dtype
-            up_cpu   = lora_up.to("cpu", dtype=torch.float32, non_blocking=False)
-            down_cpu = lora_down.to("cpu", dtype=torch.float32, non_blocking=False)
-            delta_W  = (up_cpu @ down_cpu) * float(scaling)
-            param.data.add_(delta_W.to(device=param.device, dtype=param.dtype, non_blocking=False))
+            if try_gpu:
+                try:
+                    lu = lora_up.to(device=dev, dtype=torch.float32, non_blocking=True)
+                    ld = lora_down.to(device=dev, dtype=torch.float32, non_blocking=True)
+                    delta = torch.matmul(lu, ld) * float(scaling)
+                    param.data.add_(delta.to(dtype=param.dtype))
+                    if LORA_DBG: print("LoRA merge: GPU ok:", param.shape)
+                    return
+                except Exception as e:
+                    if LORA_DBG:
+                        print("LoRA merge: GPU failed, falling back:", e)
+                        traceback.print_exc()
+                    if not LORA_FALLBACK:
+                        raise
+
+            # CPU fallback (also used when LORA_MERGE_DEV=cpu)
+            lu = lora_up.to(device="cpu", dtype=torch.float32, non_blocking=False)
+            ld = lora_down.to(device="cpu", dtype=torch.float32, non_blocking=False)
+            delta = torch.matmul(lu, ld) * float(scaling)
+            param.data.add_(delta.to(device=dev, dtype=param.dtype, non_blocking=True))
 
     _print_stage("LoRA merge: scanning model…")
 
@@ -560,6 +583,11 @@ def merge_lora_from_safetensors(pipe, lora_path):
                 _device_merge(param, lora_down, lora_up, scaling)
                 merged += 1
                 pbar.update(1)
+                
+    # Optional sync if any GPU merges happened
+    if (LORA_MERGE_DEV in {"cuda", "auto"}
+        and next(transformer.parameters()).is_cuda):
+        torch.cuda.synchronize()
 
     pbar.close()
     print(f"Merged {merged} LoRA weights into the model")
