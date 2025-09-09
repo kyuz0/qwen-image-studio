@@ -1,53 +1,71 @@
 import argparse
+
 import os
-import secrets
-import sys
-import shlex
-import time
-import torch
 import re
+import secrets
+import shlex
 import sys
-import tqdm.auto as tqdm_auto
-from datetime import datetime
+import time
 from contextlib import contextmanager
-from threading import Event, Thread
-from PIL.PngImagePlugin import PngInfo
+from datetime import datetime
 from pathlib import Path
+from threading import Event, Thread
+
 import safetensors.torch as _st
+import torch
+import torch.nn.functional
+import torch.nn.functional as F
+import tqdm.auto as tqdm_auto
+from PIL.PngImagePlugin import PngInfo
 
 # --- FlashAttention shim (env-toggle) ---
-import os, torch, torch.nn.functional as F
-if os.getenv("QWEN_FA_SHIM", "0") in {"1","true","TRUE","yes"}:
+if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
     try:
         from flash_attn.flash_attn_interface import flash_attn_func as _fa
     except Exception:
         _fa = None
     _orig = F.scaled_dot_product_attention
-    _dbg  = os.getenv("QWEN_FA_DEBUG")
+    _dbg = os.getenv("QWEN_FA_DEBUG")
 
     def _sdpa_fa(*args, **kw):
         q = kw.get("query", args[0] if args else None)
-        k = kw.get("key",   args[1] if len(args)>1 else None)
-        v = kw.get("value", args[2] if len(args)>2 else None)
+        k = kw.get("key", args[1] if len(args) > 1 else None)
+        v = kw.get("value", args[2] if len(args) > 2 else None)
         attn_mask = kw.get("attn_mask", kw.get("attention_mask"))
         dropout_p = kw.get("dropout_p", 0.0)
         is_causal = kw.get("is_causal", False)
-        scale     = kw.get("scale", kw.get("softmax_scale"))
+        scale = kw.get("scale", kw.get("softmax_scale"))
         use_fa = (
-            _fa is not None and attn_mask is None and dropout_p==0.0 and not is_causal and
-            q is not None and k is not None and v is not None and
-            q.dtype in (torch.float16, torch.bfloat16) and q.shape[-1] in (64,128) and
-            q.is_cuda and k.is_cuda and v.is_cuda and q.shape[1]==k.shape[1]==v.shape[1]
+            _fa is not None
+            and attn_mask is None
+            and dropout_p == 0.0
+            and not is_causal
+            and q is not None
+            and k is not None
+            and v is not None
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and q.shape[-1] in (64, 128)
+            and q.is_cuda
+            and k.is_cuda
+            and v.is_cuda
+            and q.shape[1] == k.shape[1] == v.shape[1]
         )
         if use_fa:
-            if scale is None: scale = (q.shape[-1] ** -0.5)
-            o = _fa(q.transpose(1,2).contiguous(),
-                    k.transpose(1,2).contiguous(),
-                    v.transpose(1,2).contiguous(),
-                    dropout_p=0.0, softmax_scale=scale, causal=False).transpose(1,2)
-            if _dbg: print("ATTN: FA")
+            if scale is None:
+                scale = q.shape[-1] ** -0.5
+            o = _fa(
+                q.transpose(1, 2).contiguous(),
+                k.transpose(1, 2).contiguous(),
+                v.transpose(1, 2).contiguous(),
+                dropout_p=0.0,
+                softmax_scale=scale,
+                causal=False,
+            ).transpose(1, 2)
+            if _dbg:
+                print("ATTN: FA")
             return o
-        if _dbg: print("ATTN: SDPA")
+        if _dbg:
+            print("ATTN: SDPA")
         return _orig(*args, **kw)
 
     F.scaled_dot_product_attention = _sdpa_fa
@@ -56,7 +74,15 @@ else:
     print("ATTN: FA shim OFF")
 # ----------------------------------------
 
-def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
+
+def _rt_no_sigmas(
+    scheduler,
+    num_inference_steps=None,
+    device=None,
+    timesteps=None,
+    sigmas=None,
+    **kwargs,
+):
     scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
     ts = scheduler.timesteps
     return ts, len(ts)
@@ -68,22 +94,29 @@ def get_output_dir():
     output_dir.mkdir(exist_ok=True)
     return output_dir
 
+
 def _full_command_line() -> str:
     return " ".join(shlex.quote(a) for a in sys.argv)
+
 
 def _print_stage(msg: str) -> None:
     # Single flushy print used by the server parser
     print(f"CLI: {msg}", flush=True)
 
+
 class _CRToNL:
     """Turn carriage-return redraws into newline lines so logs are persistent."""
+
     def __init__(self, stream):
         self._s = stream
+
     def write(self, s: str):
-        s = s.replace('\r', '\n')
+        s = s.replace("\r", "\n")
         return self._s.write(s)
+
     def flush(self):
         return self._s.flush()
+
 
 @contextmanager
 def _patch_diffusers_progress():
@@ -97,7 +130,7 @@ def _patch_diffusers_progress():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._last_pct = -1
-        
+
         def update(self, n=1):
             result = super().update(n)
             if self.total and self.desc and "denois" in self.desc.lower():
@@ -111,12 +144,13 @@ def _patch_diffusers_progress():
 
     # Patch tqdm
     tqdm_auto.tqdm = DenoiseProgressTqdm
-    
+
     try:
         yield
     finally:
         # Always restore original tqdm
         tqdm_auto.tqdm = original_tqdm
+
 
 @contextmanager
 def _progress_heartbeat(label: str = "Denoising", interval: float = 2.0):
@@ -137,6 +171,7 @@ def _progress_heartbeat(label: str = "Denoising", interval: float = 2.0):
     finally:
         stop.set()
         t.join(timeout=0.2)
+
 
 def build_generate_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
@@ -189,8 +224,8 @@ def build_generate_parser(subparsers) -> argparse.ArgumentParser:
         "--size",
         type=str,
         default="16:9",
-        choices=["1:1","16:9","9:16","4:3","3:4","3:2","2:3"],
-        help="Aspect ratio / resolution preset."
+        choices=["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
+        help="Aspect ratio / resolution preset.",
     )
     parser.add_argument(
         "--lora",
@@ -324,23 +359,36 @@ def get_custom_lora_path(lora_spec):
         print(f"Failed to load custom LoRA from {repo_id}: {e}")
         return None
 
+
 def merge_lora_from_safetensors(pipe, lora_path):
+    import re
+
     import safetensors.torch as st
-    import torch, re
+    import torch
 
     try:
         from tqdm.auto import tqdm
     except Exception:
+
         class _Dummy:
-            def __init__(self, *a, **k): pass
-            def update(self, *a, **k): pass
-            def close(self): pass
-        def tqdm(*a, **k): return _Dummy()
+            def __init__(self, *a, **k):
+                pass
+
+            def update(self, *a, **k):
+                pass
+
+            def close(self):
+                pass
+
+        def tqdm(*a, **k):
+            return _Dummy()
 
     _print_stage("LoRA merge: loading weights…")
     transformer = getattr(pipe, "transformer", None) or getattr(pipe, "unet", None)
     if transformer is None:
-        raise RuntimeError("Could not locate pipeline.transformer or pipeline.unet to merge LoRA into")
+        raise RuntimeError(
+            "Could not locate pipeline.transformer or pipeline.unet to merge LoRA into"
+        )
 
     target_device = str(next(transformer.parameters()).device)
     lora_state = st.load_file(lora_path, device=target_device)
@@ -348,7 +396,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
     keys = set(lora_state.keys())
     uses_dot = any(".lora.down" in k or ".lora.up" in k for k in keys)
     uses_diff = any(k.startswith("lora_unet_") for k in keys)
-    uses_ab  = any(".lora_A" in k or ".lora_B" in k for k in keys)
+    uses_ab = any(".lora_A" in k or ".lora_B" in k for k in keys)
 
     def convert_diffusers_key_to_transformer_key(diff_key: str) -> str:
         key = diff_key.replace("lora_unet_", "")
@@ -373,7 +421,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
 
     def _device_merge(param, lora_down, lora_up, scaling: float):
         device = param.device
-        lora_up   = lora_up.to(device=device, dtype=torch.float32)
+        lora_up = lora_up.to(device=device, dtype=torch.float32)
         lora_down = lora_down.to(device=device, dtype=torch.float32)
         delta_W = torch.matmul(lora_up, lora_down) * float(scaling)
         param.data.add_(delta_W.to(dtype=param.data.dtype))
@@ -385,7 +433,10 @@ def merge_lora_from_safetensors(pipe, lora_path):
         if uses_ab:
             for name, _ in transformer.named_parameters():
                 base = name[:-7] if name.endswith(".weight") else name
-                a1, b1 = f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"
+                a1, b1 = (
+                    f"diffusion_model.{base}.lora_A.weight",
+                    f"diffusion_model.{base}.lora_B.weight",
+                )
                 a2, b2 = f"{base}.lora_A.weight", f"{base}.lora_B.weight"
                 if (a1 in keys and b1 in keys) or (a2 in keys and b2 in keys):
                     cnt += 1
@@ -395,9 +446,9 @@ def merge_lora_from_safetensors(pipe, lora_path):
                 if not k.startswith("lora_unet_"):
                     continue
                 base = convert_diffusers_key_to_transformer_key(
-                    k.replace(".lora_down.weight","")
-                     .replace(".lora_up.weight","")
-                     .replace(".alpha","")
+                    k.replace(".lora_down.weight", "")
+                    .replace(".lora_up.weight", "")
+                    .replace(".alpha", "")
                 )
                 bases.setdefault(base, set()).add(k)
             for name, _ in transformer.named_parameters():
@@ -406,7 +457,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
                 if not ks:
                     continue
                 has_down = any(k.endswith(".lora_down.weight") for k in ks)
-                has_up   = any(k.endswith(".lora_up.weight")   for k in ks)
+                has_up = any(k.endswith(".lora_up.weight") for k in ks)
                 if has_down and has_up:
                     cnt += 1
         else:
@@ -432,7 +483,10 @@ def merge_lora_from_safetensors(pipe, lora_path):
     if uses_ab:
         for name, param in transformer.named_parameters():
             base = name[:-7] if name.endswith(".weight") else name
-            a1, b1 = f"diffusion_model.{base}.lora_A.weight", f"diffusion_model.{base}.lora_B.weight"
+            a1, b1 = (
+                f"diffusion_model.{base}.lora_A.weight",
+                f"diffusion_model.{base}.lora_B.weight",
+            )
             a2, b2 = f"{base}.lora_A.weight", f"{base}.lora_B.weight"
             if a1 in keys and b1 in keys:
                 lora_down, lora_up = lora_state[a1], lora_state[b1]
@@ -448,15 +502,15 @@ def merge_lora_from_safetensors(pipe, lora_path):
 
     elif uses_diff:
         alpha_map = {}
-        down_map  = {}
-        up_map    = {}
+        down_map = {}
+        up_map = {}
         for k in keys:
             if not k.startswith("lora_unet_"):
                 continue
             base = convert_diffusers_key_to_transformer_key(
-                k.replace(".lora_down.weight","")
-                 .replace(".lora_up.weight","")
-                 .replace(".alpha","")
+                k.replace(".lora_down.weight", "")
+                .replace(".lora_up.weight", "")
+                .replace(".alpha", "")
             )
             if k.endswith(".lora_down.weight"):
                 down_map[base] = k
@@ -509,6 +563,7 @@ def merge_lora_from_safetensors(pipe, lora_path):
     pbar.close()
     print(f"Merged {merged} LoRA weights into the model")
     return pipe
+
 
 def build_edit_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
@@ -575,6 +630,7 @@ def build_edit_parser(subparsers) -> argparse.ArgumentParser:
     )
     return parser
 
+
 def build_download_parser(subparsers) -> argparse.ArgumentParser:
     p = subparsers.add_parser(
         "download",
@@ -586,23 +642,38 @@ def build_download_parser(subparsers) -> argparse.ArgumentParser:
         nargs="?",
         default="list",
         help="Comma-separated list, or 'all', or 'list'. "
-             "Options: qwen-image, qwen-image-edit, lightning-lora-8, lightning-lora-4",
+        "Options: qwen-image, qwen-image-edit, lightning-lora-8, lightning-lora-4",
     )
     return p
 
+
 def download_models(args) -> None:
-    from huggingface_hub import snapshot_download, hf_hub_download
     from shutil import copy2
+
+    from huggingface_hub import hf_hub_download, snapshot_download
+
     catalog = {
-        "qwen-image": {"kind":"snapshot","repo":"Qwen/Qwen-Image"},
-        "qwen-image-edit": {"kind":"snapshot","repo":"Qwen/Qwen-Image-Edit"},
-        "lightning-lora-8": {"kind":"file","repo":"lightx2v/Qwen-Image-Lightning","file":"Qwen-Image-Lightning-8steps-V1.1.safetensors"},
-        "lightning-lora-4": {"kind":"file","repo":"lightx2v/Qwen-Image-Lightning","file":"Qwen-Image-Lightning-4steps-V1.0-bf16.safetensors"},
+        "qwen-image": {"kind": "snapshot", "repo": "Qwen/Qwen-Image"},
+        "qwen-image-edit": {"kind": "snapshot", "repo": "Qwen/Qwen-Image-Edit"},
+        "lightning-lora-8": {
+            "kind": "file",
+            "repo": "lightx2v/Qwen-Image-Lightning",
+            "file": "Qwen-Image-Lightning-8steps-V1.1.safetensors",
+        },
+        "lightning-lora-4": {
+            "kind": "file",
+            "repo": "lightx2v/Qwen-Image-Lightning",
+            "file": "Qwen-Image-Lightning-4steps-V1.0-bf16.safetensors",
+        },
     }
     if args.targets == "list":
         print("Available:", ", ".join(catalog.keys()))
         return
-    targets = list(catalog.keys()) if args.targets == "all" else [t.strip() for t in args.targets.split(",") if t.strip()]
+    targets = (
+        list(catalog.keys())
+        if args.targets == "all"
+        else [t.strip() for t in args.targets.split(",") if t.strip()]
+    )
     for t in targets:
         if t not in catalog:
             print(f"Skip unknown: {t}")
@@ -612,8 +683,11 @@ def download_models(args) -> None:
             path = snapshot_download(repo_id=item["repo"], repo_type="model")
             print(f"{t}: cached -> {path}")
         elif item["kind"] == "file":
-            path = hf_hub_download(repo_id=item["repo"], filename=item["file"], repo_type="model")
+            path = hf_hub_download(
+                repo_id=item["repo"], filename=item["file"], repo_type="model"
+            )
             print(f"{t}: cached file -> {path}")
+
 
 def get_device_and_dtype():
     if torch.cuda.is_available():
@@ -626,14 +700,17 @@ def get_device_and_dtype():
         print("Using CPU")
         return "cpu", torch.float32
 
+
 def _device_map_str(device: str) -> str:
     return "cuda:0" if device == "cuda" else device
+
 
 def create_generator(device, seed):
     """Create a torch.Generator with the appropriate device."""
 
     generator_device = "cpu" if device == "mps" else device
     return torch.Generator(device=generator_device).manual_seed(seed)
+
 
 def generate_image(args) -> None:
     from diffusers import DiffusionPipeline
@@ -654,7 +731,14 @@ def generate_image(args) -> None:
     # Fix FlowMatch: don't pass sigmas to set_timesteps
     from diffusers.pipelines.qwenimage import pipeline_qwenimage as _qimg
 
-    def _rt_no_sigmas(scheduler, num_inference_steps=None, device=None, timesteps=None, sigmas=None, **kwargs):
+    def _rt_no_sigmas(
+        scheduler,
+        num_inference_steps=None,
+        device=None,
+        timesteps=None,
+        sigmas=None,
+        **kwargs,
+    ):
         scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
         ts = scheduler.timesteps
         return ts, len(ts)
@@ -675,6 +759,7 @@ def generate_image(args) -> None:
         if not hasattr(type(obj), name):
             return
         orig = getattr(type(obj), name)
+
         def _timed(self, *args, **kwargs):
             t = time.perf_counter()
             print(f"CLI: {label} start", flush=True)
@@ -682,12 +767,14 @@ def generate_image(args) -> None:
                 return orig(self, *args, **kwargs)
             finally:
                 print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+
         setattr(obj, name, _timed.__get__(obj, type(obj)))
 
     def _wrap_timed_static(obj, name, label):
         if not hasattr(obj, name):
             return
         orig = getattr(obj, name)
+
         def _timed(*args, **kwargs):
             t = time.perf_counter()
             print(f"CLI: {label} start", flush=True)
@@ -695,6 +782,7 @@ def generate_image(args) -> None:
                 return orig(*args, **kwargs)
             finally:
                 print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+
         setattr(obj, name, _timed)
 
     _wrap_timed(pipe, "encode_prompt", "encode_prompt")
@@ -706,9 +794,7 @@ def generate_image(args) -> None:
     # ---- END DEBUG TIMERS ----
 
     pipe.set_progress_bar_config(
-        disable=False,
-        leave=True,              # keep the final bar
-        miniters=1
+        disable=False, leave=True, miniters=1  # keep the final bar
     )
     _print_stage("Pipeline ready on device")
 
@@ -755,6 +841,7 @@ def generate_image(args) -> None:
     # LEGO Batman photobomb mode!
     if args.batman:
         import random
+
         batman_additions = [
             ", with a tiny LEGO Batman minifigure photobombing in the corner doing a dramatic cape pose",
             ", featuring a small LEGO Batman minifigure sneaking into the frame from the side",
@@ -784,7 +871,9 @@ def generate_image(args) -> None:
 
     # Ensure we generate at least one image
     num_images = max(1, int(args.num_images))
-    _print_stage(f"Generation config: steps={num_steps}, cfg={cfg_scale}, size={sel}, images={num_images}")
+    _print_stage(
+        f"Generation config: steps={num_steps}, cfg={cfg_scale}, size={sel}, images={num_images}"
+    )
 
     _print_stage(f"{num_steps} steps, CFG scale {cfg_scale}")
 
@@ -801,10 +890,13 @@ def generate_image(args) -> None:
         current_prompt = args.prompt
         if args.batman:
             import random
+
             batman_action = random.choice(batman_additions)
             current_prompt = current_prompt + batman_action
             if num_images > 1:
-                print(f"  Image {image_index + 1}: Using Batman variant - {batman_action[2:50]}...")
+                print(
+                    f"  Image {image_index + 1}: Using Batman variant - {batman_action[2:50]}..."
+                )
 
         generator = create_generator(device, per_image_seed)
         _print_stage(f"Invoking pipeline (image {image_index+1}/{num_images})")
@@ -831,7 +923,10 @@ def generate_image(args) -> None:
         meta.add_text("qim:negative_prompt", negative_prompt)
         meta.add_text("qim:steps", str(num_steps))
         meta.add_text("qim:cfg_scale", str(cfg_scale))
-        meta.add_text("qim:mode", "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"))
+        meta.add_text(
+            "qim:mode",
+            "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"),
+        )
         meta.add_text("qim:seed", str(per_image_seed))
         meta.add_text("qim:timestamp", timestamp)
         meta.add_text("qim:model", "Qwen/Qwen-Image")
@@ -841,7 +936,6 @@ def generate_image(args) -> None:
         image.save(output_filename, pnginfo=meta)
         saved_paths.append(os.path.abspath(output_filename))
 
-
     # Print full path(s) of saved image(s)
     if len(saved_paths) == 1:
         print(f"\nImage saved to: {saved_paths[0]}")
@@ -849,6 +943,7 @@ def generate_image(args) -> None:
         print("\nImages saved:")
         for path in saved_paths:
             print(f"- {path}")
+
 
 def edit_image(args) -> None:
     from diffusers import QwenImageEditPipeline
@@ -866,6 +961,7 @@ def edit_image(args) -> None:
         device_map=device,
     )
     from diffusers.pipelines.qwenimage import pipeline_qwenimage_edit as _qime
+
     _qime.retrieve_timesteps = _rt_no_sigmas
 
     # ---- DEBUG TIMERS (edit only) ----
@@ -876,6 +972,7 @@ def edit_image(args) -> None:
         if not hasattr(type(obj), name):
             return
         orig = getattr(type(obj), name)
+
         def _timed(self, *args, **kwargs):
             t = time.perf_counter()
             print(f"CLI: {label} start", flush=True)
@@ -883,6 +980,7 @@ def edit_image(args) -> None:
                 return orig(self, *args, **kwargs)
             finally:
                 print(f"CLI: {label} done {time.perf_counter()-t:.2f}s", flush=True)
+
         setattr(obj, name, _timed.__get__(obj, type(obj)))
 
     _wrap_timed(pipeline, "encode_prompt", "encode_prompt")
@@ -894,12 +992,12 @@ def edit_image(args) -> None:
     _wrap_timed(pipeline.text_encoder, "forward", "text_encoder_forward")
     # ---- END DEBUG TIMERS ----
 
-
     try:
         pipeline.enable_sdpa()
     except Exception:
         try:
             from diffusers.models.attention_processor import AttnProcessor2_0
+
             pipeline.set_attn_processor(AttnProcessor2_0())
         except Exception:
             pass
@@ -908,35 +1006,51 @@ def edit_image(args) -> None:
     pipeline.vae.to(device=device, dtype=torch.bfloat16)
     if hasattr(pipeline.vae, "enable_tiling"):
         pipeline.vae.enable_tiling()
-    print(f"Edit VAE: {pipeline.vae.dtype} tiling={getattr(pipeline.vae,'use_tiling',None)}")
+    print(
+        f"Edit VAE: {pipeline.vae.dtype} tiling={getattr(pipeline.vae,'use_tiling',None)}"
+    )
 
     # Hard guard: ensure tiling stays ON for decode
     _orig_decode = type(pipeline.vae).decode
+
     def _decode_guard(self, *a, **k):
         if not getattr(self, "use_tiling", False):
             self.enable_tiling()
         return _orig_decode(self, *a, **k)
+
     pipeline.vae.decode = _decode_guard.__get__(pipeline.vae, type(pipeline.vae))
 
-    
     # Run VAE.encode under bf16 autocast, ensure input matches VAE device
     # Timed + autocast VAE encode
     _orig_vae_encode = type(pipeline)._encode_vae_image
+
     def _vae_encode_timed_autocast(self, image, generator):
-        import time, torch
+        import time
+
+        import torch
+
         t = time.perf_counter()
         print("CLI: vae_encode start", flush=True)
         try:
-            image = image.to(device=self.vae.device, dtype=torch.float32, non_blocking=True).contiguous()
-            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            image = image.to(
+                device=self.vae.device, dtype=torch.float32, non_blocking=True
+            ).contiguous()
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 return _orig_vae_encode(self, image, generator)
         finally:
             print(f"CLI: vae_encode done {time.perf_counter()-t:.2f}s", flush=True)
-    pipeline._encode_vae_image = _vae_encode_timed_autocast.__get__(pipeline, type(pipeline))
+
+    pipeline._encode_vae_image = _vae_encode_timed_autocast.__get__(
+        pipeline, type(pipeline)
+    )
 
     # (optional single-line proof)
-    print("EDIT VAE:", next(pipeline.vae.parameters()).dtype, next(pipeline.vae.parameters()).device, flush=True)
-
+    print(
+        "EDIT VAE:",
+        next(pipeline.vae.parameters()).dtype,
+        next(pipeline.vae.parameters()).device,
+        flush=True,
+    )
 
     pipeline.set_progress_bar_config(
         disable=False,
@@ -1002,6 +1116,7 @@ def edit_image(args) -> None:
     edit_prompt = args.prompt
     if args.batman:
         import random
+
         batman_edits = [
             " Also add a tiny LEGO Batman minifigure photobombing somewhere unexpected.",
             " Include a small LEGO Batman figure sneaking into the scene.",
@@ -1029,8 +1144,9 @@ def edit_image(args) -> None:
             print(f"CLI: denoise {pct}%", flush=True)
             _edit_progress_cb._last = pct
 
-
-    pipeline.set_progress_bar_config(disable=False, leave=True, miniters=1, desc="Denoising")
+    pipeline.set_progress_bar_config(
+        disable=False, leave=True, miniters=1, desc="Denoising"
+    )
 
     _print_stage("Invoking edit pipeline")
     _print_stage("Denoising started")
@@ -1068,13 +1184,17 @@ def edit_image(args) -> None:
     meta.add_text("qim:negative_prompt", " ")
     meta.add_text("qim:steps", str(num_steps))
     meta.add_text("qim:cfg_scale", str(cfg_scale))
-    meta.add_text("qim:mode", "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"))
+    meta.add_text(
+        "qim:mode",
+        "ultra-fast" if args.ultra_fast else ("fast" if args.fast else "normal"),
+    )
     meta.add_text("qim:seed", str(seed))
     meta.add_text("qim:timestamp", timestamp)
     meta.add_text("qim:model", "Qwen/Qwen-Image-Edit")
 
     edited_image.save(output_filename, pnginfo=meta)
     print(f"\nEdited image saved to: {os.path.abspath(output_filename)}")
+
 
 def main() -> None:
     try:
