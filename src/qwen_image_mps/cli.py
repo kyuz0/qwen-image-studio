@@ -24,51 +24,105 @@ LORA_FALLBACK  = os.getenv("QWEN_LORA_MERGE_FALLBACK", "1") not in {"0","false",
 LORA_DBG       = os.getenv("QWEN_LORA_MERGE_DEBUG", "0") in {"1","true","TRUE"}
 
 # --- FlashAttention shim (env-toggle) ---
-if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
+if os.getenv("QWEN_FA_SHIM", "0").strip().lower() in {"1", "true", "yes"}:
     try:
         from flash_attn.flash_attn_interface import flash_attn_func as _fa
     except Exception:
         _fa = None
 
+    import atexit
+    import torch
     import torch.nn.functional as F
+
     _orig = F.scaled_dot_product_attention
 
+    # env toggles
     _dbg = os.getenv("QWEN_FA_DEBUG")
-    _sync = os.getenv("QWEN_FA_SYNC", "0").lower() in {"1", "true", "yes", "on"}  
-    _dims_env = os.getenv("QWEN_FA_DIMS", "64,128").strip()
+    _sync = os.getenv("QWEN_FA_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    # allowed head dims (e.g. "128,384")
+    _dims_env = os.getenv("QWEN_FA_DIMS", "128,384").strip()
     _allowed_dims = {int(x) for x in _dims_env.split(",") if x}
 
-    # module-level counters
+    # max sequence length gate (0 or unset => no cap)
+    _max_seq_env = os.getenv("QWEN_FA_MAX_SEQ", "0").strip()
+    _max_seq = int(_max_seq_env) if _max_seq_env.isdigit() and int(_max_seq_env) > 0 else None
+
+    # optional per-shape log (unique qlen/klen per dim)
+    _log_seq = os.getenv("QWEN_FA_LOG_SEQ", "0").strip().lower() in {"1", "true", "yes", "on"}
+    _seq_seen = set()
+
+    # counters
     _fa_hits = 0
     _fa_fallbacks = 0
+    _fa_dim_skips = 0
+    _fa_seq_skips = 0
+    _fa_errors = 0
+
+    print(
+        "ATTN: FA shim ON "
+        f"(dims={sorted(_allowed_dims)}, max_seq={'∞' if _max_seq is None else _max_seq}, "
+        f"sync={'on' if _sync else 'off'})"
+    )
+
+    def _maybe_log_seq(dim, qlen, klen):
+        if not _log_seq:
+            return
+        key = (dim, qlen, klen)
+        if key in _seq_seen:
+            return
+        _seq_seen.add(key)
+        print(f"ATTN: SEQ dim={dim} qlen={qlen} klen={klen}")
 
     def _sdpa_fa(*args, **kw):
-        global _fa_hits, _fa_fallbacks
+        nonlocal _fa_hits, _fa_fallbacks, _fa_dim_skips, _fa_seq_skips, _fa_errors
+
         q = kw.get("query", args[0] if args else None)
         k = kw.get("key", args[1] if len(args) > 1 else None)
         v = kw.get("value", args[2] if len(args) > 2 else None)
+
         attn_mask = kw.get("attn_mask", kw.get("attention_mask"))
         dropout_p = kw.get("dropout_p", 0.0)
         is_causal = kw.get("is_causal", False)
         scale = kw.get("scale", kw.get("softmax_scale"))
 
-        use_fa = (
+        can_try_fa = (
             _fa is not None
+            and q is not None and k is not None and v is not None
+            and q.is_cuda and k.is_cuda and v.is_cuda
+            and q.dtype in (torch.float16, torch.bfloat16)
             and attn_mask is None
             and dropout_p == 0.0
             and not is_causal
-            and q is not None and k is not None and v is not None
-            and q.dtype in (torch.float16, torch.bfloat16)
-            and q.is_cuda and k.is_cuda and v.is_cuda
             and q.shape[1] == k.shape[1] == v.shape[1]
-            and q.shape[-1] in _allowed_dims
         )
 
-        if use_fa:
-            if scale is None:
-                scale = q.shape[-1] ** -0.5
-            _fa_hits += 1
-            o = _fa(
+        if not can_try_fa:
+            _fa_fallbacks += 1
+            if _dbg: print("ATTN: SDPA (preconditions)")
+            return _orig(*args, **kw)
+
+        head_dim = q.shape[-1]
+        qlen = q.shape[-2]
+        klen = k.shape[-2]
+
+        if head_dim not in _allowed_dims:
+            _fa_dim_skips += 1
+            _fa_fallbacks += 1
+            if _dbg: print(f"ATTN: SDPA (dim {head_dim} not allowed)")
+            return _orig(*args, **kw)
+
+        if _max_seq is not None and (qlen > _max_seq or klen > _max_seq):
+            _fa_seq_skips += 1
+            _fa_fallbacks += 1
+            if _dbg: print(f"ATTN: SDPA (seq gate q={qlen} k={klen} > {_max_seq})")
+            return _orig(*args, **kw)
+
+        if scale is None:
+            scale = head_dim ** -0.5
+
+        try:
+            out = _fa(
                 q.transpose(1, 2).contiguous(),
                 k.transpose(1, 2).contiguous(),
                 v.transpose(1, 2).contiguous(),
@@ -76,22 +130,32 @@ if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
                 softmax_scale=scale,
                 causal=False,
             ).transpose(1, 2)
+            _fa_hits += 1
+            _maybe_log_seq(head_dim, qlen, klen)
             if _sync:
                 torch.cuda.synchronize()
             if _dbg:
-                print("ATTN: FA")
-            return o
-
-        _fa_fallbacks += 1
-        if _dbg:
-            print("ATTN: SDPA")
-        return _orig(*args, **kw)
+                print(f"ATTN: FA dim={head_dim} q={qlen} k={klen}")
+            return out
+        except Exception as e:
+            _fa_errors += 1
+            _fa_fallbacks += 1
+            if _dbg:
+                print(f"ATTN: FA ERROR -> SDPA ({type(e).__name__}: {e})")
+            return _orig(*args, **kw)
 
     F.scaled_dot_product_attention = _sdpa_fa
-    print(f"ATTN: FA shim ON (dims={sorted(_allowed_dims)}, sync={'on' if _sync else 'off'})")
+
+    @atexit.register
+    def _fa_summary():
+        print(
+            f"ATTN: FA summary hits={_fa_hits} fallbacks={_fa_fallbacks} "
+            f"dim_skips={_fa_dim_skips} seq_skips={_fa_seq_skips} errors={_fa_errors}"
+        )
 else:
     print("ATTN: FA shim OFF")
 # ----------------------------------------
+
 
 def _rt_no_sigmas(
     scheduler,
