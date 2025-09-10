@@ -1,23 +1,29 @@
 import asyncio
 import json
+import json as _json
 import os
-import sys
 import re
+import shlex
 import shutil
+import subprocess
+import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
-import subprocess
-import json as _json
-import time
-import subprocess
-import shlex
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Form, File, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi import HTTPException
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 
@@ -30,7 +36,9 @@ PUBLIC_DIR = HERE / "static"
 PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
 
 # CLI path from same repo; override with env QIM_CLI_PATH if needed
-CLI_PATH = Path(os.getenv("QIM_CLI_PATH") or (PROJECT_ROOT / "qwen-image-mps.py")).resolve()
+CLI_PATH = Path(
+    os.getenv("QIM_CLI_PATH") or (PROJECT_ROOT / "qwen-image-mps.py")
+).resolve()
 PYTHON_BIN = os.getenv("QIM_PYTHON_BIN", "python")
 
 # uploads
@@ -49,13 +57,16 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 (STATE_DIR / "jobs").mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "jobs.json"
 
+
 def _atomic_write(path: Path, data: dict):
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     os.replace(tmp, path)
 
+
 def save_jobs():
     _atomic_write(STATE_FILE, {"jobs": jobs})
+
 
 def load_jobs():
     if STATE_FILE.is_file():
@@ -65,7 +76,12 @@ def load_jobs():
             # clean transitional states after a crash/restart
             for jid, j in jobs.items():
                 # anything not terminal or queued → make it queued
-                if j.get("status") not in ("completed", "failed", "cancelled", "queued"):
+                if j.get("status") not in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "queued",
+                ):
                     j["status"] = "queued"
                     j["stage"] = "queued"
                 if j.get("status") == "queued":
@@ -79,8 +95,10 @@ def load_jobs():
         except Exception as e:
             print(f"[Qwen-Studio] Failed to load jobs.json: {e}")
 
+
 jobs: Dict[str, dict] = {}
 job_queue: List[str] = []
+
 
 # --- websocket hub
 class Hub:
@@ -109,10 +127,13 @@ class Hub:
         for ws in dead:
             self.remove(ws)
 
+
 hub = Hub()
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
 
 def build_command(job: dict) -> List[str]:
     t = job["type"]
@@ -153,7 +174,9 @@ def build_command(job: dict) -> List[str]:
 def cmd_to_string(cmd: List[str]) -> str:
     def q(s: str) -> str:
         return s if re.fullmatch(r"[A-Za-z0-9_\-./:]+", s) else json.dumps(s)
+
     return " ".join(q(x) for x in cmd)
+
 
 # --- gpu stats helpers
 class GPUMonitor:
@@ -168,86 +191,123 @@ class GPUMonitor:
             "gtt_used_percent": 0,
             "gpu_temperature": 0,
             "gpu_name": "",
-            "last_update": 0
+            "last_update": 0,
         }
         self.rocm_smi_path = self.find_rocm_smi()
-        
+
     def find_rocm_smi(self):
-        return 'rocm-smi'
-    
+        return "rocm-smi"
+
     def get_stats(self):
         if not self.rocm_smi_path:
             return self.stats
         try:
             # GPU utilization
-            result = subprocess.run([self.rocm_smi_path, '--showuse', '--json'],
-                                    capture_output=True, text=True, timeout=3)
+            result = subprocess.run(
+                [self.rocm_smi_path, "--showuse", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                if 'card0' in data and 'GPU use (%)' in data['card0']:
-                    use = str(data['card0']['GPU use (%)']).replace('%', '')
+                if "card0" in data and "GPU use (%)" in data["card0"]:
+                    use = str(data["card0"]["GPU use (%)"]).replace("%", "")
                     self.stats["gpu_utilization"] = int(float(use))
-            
+
             # VRAM info
-            result = subprocess.run([self.rocm_smi_path, '--showmeminfo', 'vram', '--json'],
-                                    capture_output=True, text=True, timeout=3)
+            result = subprocess.run(
+                [self.rocm_smi_path, "--showmeminfo", "vram", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                if 'card0' in data:
-                    card = data['card0']
-                    if 'VRAM Total Memory (B)' in card and 'VRAM Total Used Memory (B)' in card:
-                        total_b = int(card['VRAM Total Memory (B)'])
-                        used_b  = int(card['VRAM Total Used Memory (B)'])
+                if "card0" in data:
+                    card = data["card0"]
+                    if (
+                        "VRAM Total Memory (B)" in card
+                        and "VRAM Total Used Memory (B)" in card
+                    ):
+                        total_b = int(card["VRAM Total Memory (B)"])
+                        used_b = int(card["VRAM Total Used Memory (B)"])
                         total_mb = total_b // (1024 * 1024)
-                        used_mb  = used_b  // (1024 * 1024)
+                        used_mb = used_b // (1024 * 1024)
                         self.stats["vram_total"] = total_mb
                         self.stats["vram_used"] = used_mb
-                        self.stats["vram_used_percent"] = int((used_mb / total_mb) * 100) if total_mb else 0
-            
+                        self.stats["vram_used_percent"] = (
+                            int((used_mb / total_mb) * 100) if total_mb else 0
+                        )
+
             # GTT info
-            result = subprocess.run([self.rocm_smi_path, '--showmeminfo', 'gtt', '--json'],
-                                    capture_output=True, text=True, timeout=3)
+            result = subprocess.run(
+                [self.rocm_smi_path, "--showmeminfo", "gtt", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                if 'card0' in data:
-                    card = data['card0']
-                    if 'GTT Total Memory (B)' in card and 'GTT Total Used Memory (B)' in card:
-                        total_b = int(card['GTT Total Memory (B)'])
-                        used_b  = int(card['GTT Total Used Memory (B)'])
+                if "card0" in data:
+                    card = data["card0"]
+                    if (
+                        "GTT Total Memory (B)" in card
+                        and "GTT Total Used Memory (B)" in card
+                    ):
+                        total_b = int(card["GTT Total Memory (B)"])
+                        used_b = int(card["GTT Total Used Memory (B)"])
                         total_mb = total_b // (1024 * 1024)
-                        used_mb  = used_b  // (1024 * 1024)
+                        used_mb = used_b // (1024 * 1024)
                         self.stats["gtt_total"] = total_mb
                         self.stats["gtt_used"] = used_mb
-                        self.stats["gtt_used_percent"] = int((used_mb / total_mb) * 100) if total_mb else 0
-            
+                        self.stats["gtt_used_percent"] = (
+                            int((used_mb / total_mb) * 100) if total_mb else 0
+                        )
+
             # Temperature
-            result = subprocess.run([self.rocm_smi_path, '--showtemp', '--json'],
-                                    capture_output=True, text=True, timeout=3)
+            result = subprocess.run(
+                [self.rocm_smi_path, "--showtemp", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
-                if 'card0' in data:
-                    card = data['card0']
-                    if 'Temperature (Sensor edge) (C)' in card:
-                        temp = str(card['Temperature (Sensor edge) (C)']).replace('°C', '').strip()
+                if "card0" in data:
+                    card = data["card0"]
+                    if "Temperature (Sensor edge) (C)" in card:
+                        temp = (
+                            str(card["Temperature (Sensor edge) (C)"])
+                            .replace("°C", "")
+                            .strip()
+                        )
                         self.stats["gpu_temperature"] = int(float(temp))
-            
+
             # GPU Name (only if empty)
             if not self.stats["gpu_name"]:
-                result = subprocess.run([self.rocm_smi_path, '--showproductname', '--json'],
-                                        capture_output=True, text=True, timeout=3)
+                result = subprocess.run(
+                    [self.rocm_smi_path, "--showproductname", "--json"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
                 if result.returncode == 0:
                     data = json.loads(result.stdout)
-                    if 'card0' in data:
-                        card = data['card0']
-                        if 'Card Series' in card and str(card['Card Series']).strip() not in ('N/A', ''):
-                            self.stats["gpu_name"] = str(card['Card Series']).strip()
-                        elif 'GFX Version' in card:
-                            self.stats["gpu_name"] = str(card['GFX Version']).strip()
+                    if "card0" in data:
+                        card = data["card0"]
+                        if "Card Series" in card and str(
+                            card["Card Series"]
+                        ).strip() not in ("N/A", ""):
+                            self.stats["gpu_name"] = str(card["Card Series"]).strip()
+                        elif "GFX Version" in card:
+                            self.stats["gpu_name"] = str(card["GFX Version"]).strip()
         except Exception as e:
             print(f"GPU monitoring error: {e}")
-        
+
         self.stats["last_update"] = time.time()
         return self.stats
+
 
 gpu_monitor = GPUMonitor()
 
@@ -257,16 +317,17 @@ TQDM_RE = re.compile(r"(\d+)%\|")
 SAVE_SINGLE_RE = re.compile(r"Image saved to:\s+(?P<path>.+)")
 SAVE_EDIT_RE = re.compile(r"Edited image saved to:\s+(?P<path>.+)")
 
+
 def extract_progress(line: str):
     # 1) Plain percent anywhere: "67%" or " 67%|"
-    m = re.search(r'(\d{1,3})\s*%(?:\s|[\]|])', line)
+    m = re.search(r"(\d{1,3})\s*%(?:\s|[\]|])", line)
     if m:
         pct = int(m.group(1))
         if 0 <= pct <= 100:
             return pct / 100.0
 
     # 2) tqdm style counters: "3/5 [" or "3/5["
-    m = re.search(r'(\d+)\s*/\s*(\d+)\s*\[', line)
+    m = re.search(r"(\d+)\s*/\s*(\d+)\s*\[", line)
     if m:
         num, den = int(m.group(1)), int(m.group(2))
         if den > 0:
@@ -282,6 +343,7 @@ def extract_progress(line: str):
 async def annotate_png_with_command(path: Path, cmd_str: str):
     try:
         from PIL import Image, PngImagePlugin
+
         if path.suffix.lower() != ".png":
             return
         img = Image.open(path)
@@ -300,9 +362,10 @@ async def annotate_png_with_command(path: Path, cmd_str: str):
     except Exception:
         pass
 
+
 async def iter_lines_preserve_cr(stream):
     """
-    Read from an async stream while echoing raw output. 
+    Read from an async stream while echoing raw output.
     Now yields on both \\n AND \\r to catch tqdm progress updates.
     """
     buf = ""
@@ -321,31 +384,32 @@ async def iter_lines_preserve_cr(stream):
             # Find the next delimiter (newline or carriage return)
             n_pos = buf.find("\n")
             r_pos = buf.find("\r")
-            
+
             if n_pos == -1 and r_pos == -1:
                 break
-            
+
             # Use whichever comes first
             if n_pos == -1:
                 delimiter_pos = r_pos
                 delimiter = "\r"
             elif r_pos == -1:
-                delimiter_pos = n_pos  
+                delimiter_pos = n_pos
                 delimiter = "\n"
             else:
                 delimiter_pos = min(n_pos, r_pos)
                 delimiter = "\r" if r_pos < n_pos else "\n"
-            
+
             line = buf[:delimiter_pos].rstrip("\r\n")
-            buf = buf[delimiter_pos + 1:]
-            
+            buf = buf[delimiter_pos + 1 :]
+
             # Only yield non-empty lines to avoid spam
             if line.strip():
                 yield line
-                
+
     if buf.strip():
         # emit any trailing partial line once the process ends
         yield buf.rstrip("\r\n")
+
 
 async def process_queue():
     while True:
@@ -379,11 +443,11 @@ async def process_queue():
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(PROJECT_ROOT),
             )
-            running_processes[job_id] = proc 
+            running_processes[job_id] = proc
             assert proc.stdout is not None
             async for line in iter_lines_preserve_cr(proc.stdout):
                 line = line.rstrip()
-                
+
                 # stages (guard against regression)
                 if "Loading checkpoint shards" in line:
                     if current_stage in ("lora_loading", "generation"):
@@ -447,9 +511,17 @@ async def process_queue():
                         job["stages"]["lora_loading"]["status"] = "active"
                         await hub.broadcast({"type": "job_update", "job": job})
 
-                if ("Denoising started" in line) or ("steps, CFG scale" in line) or ("Editing config:" in line) or ("Generation config:" in line):
+                if (
+                    ("Denoising started" in line)
+                    or ("steps, CFG scale" in line)
+                    or ("Editing config:" in line)
+                    or ("Generation config:" in line)
+                ):
                     for s in ("model_loading", "pipeline_loading", "lora_loading"):
-                        if s in job["stages"] and job["stages"][s]["status"] == "active":
+                        if (
+                            s in job["stages"]
+                            and job["stages"][s]["status"] == "active"
+                        ):
                             job["stages"][s]["status"] = "completed"
                             job["stages"][s]["progress"] = 1.0
                     current_stage = "generation"
@@ -503,7 +575,9 @@ async def process_queue():
                             moved.append(f"jobs/{job_id}/{src.name}")
                         job["outputs"] = moved
                         for rel in job["outputs"]:
-                            await annotate_png_with_command(STATE_DIR / rel, job["command"])
+                            await annotate_png_with_command(
+                                STATE_DIR / rel, job["command"]
+                            )
                         save_jobs()
 
         except Exception as e:
@@ -516,7 +590,7 @@ async def process_queue():
             job["retry_count"] += 1
             if job["retry_count"] <= job["max_retries"]:
                 job["status"] = "queued"
-                job["stage"] = "queued"  
+                job["stage"] = "queued"
                 job["progress"] = 0.0
                 job["error"] = None  # Clear error on retry
                 # Reset non-completed stages for retry
@@ -528,6 +602,7 @@ async def process_queue():
 
         await hub.broadcast({"type": "job_update", "job": job})
         save_jobs()
+
 
 def new_job(type_: str, params: dict, max_retries: int) -> dict:
     jid = str(uuid.uuid4())
@@ -560,11 +635,14 @@ def new_job(type_: str, params: dict, max_retries: int) -> dict:
     save_jobs()
     return job
 
+
 @app.get("/api/jobs")
 async def api_jobs():
     return {"jobs": list(jobs.values())}
 
+
 from fastapi import HTTPException
+
 
 @app.delete("/api/jobs/{job_id}")
 async def api_delete_job(job_id: str):
@@ -574,8 +652,10 @@ async def api_delete_job(job_id: str):
 
     # if queued, remove from queue
     if j.get("status") == "queued":
-        try: job_queue.remove(job_id)
-        except ValueError: pass
+        try:
+            job_queue.remove(job_id)
+        except ValueError:
+            pass
 
     # if running, terminate
     if job_id in running_processes:
@@ -600,6 +680,7 @@ async def api_delete_job(job_id: str):
     await hub.broadcast({"type": "job_deleted", "id": job_id})
     return {"ok": True}
 
+
 @app.get("/api/file")
 async def api_file(path: str):
     # Reject absolute inputs outright
@@ -623,6 +704,7 @@ async def api_file(path: str):
 async def root():
     return FileResponse(PUBLIC_DIR / "index.html")
 
+
 @app.websocket("/ws")
 async def ws(ws: WebSocket):
     await hub.connect(ws)
@@ -631,7 +713,7 @@ async def ws(ws: WebSocket):
         while True:
             msg = await ws.receive_text()
             data = json.loads(msg)
-            
+
             if data.get("type") == "cancel_job":
                 jid = data.get("job_id")
                 print(f"[Qwen-Studio] Cancelling job {jid}")
@@ -665,16 +747,19 @@ async def ws(ws: WebSocket):
                                     await asyncio.wait_for(proc.wait(), timeout=3.0)
                                 except asyncio.TimeoutError:
                                     proc.kill()
-                                    print(f"[Qwen-Studio] Force killed process for job {jid}")
+                                    print(
+                                        f"[Qwen-Studio] Force killed process for job {jid}"
+                                    )
                             except Exception as e:
-                                print(f"[Qwen-Studio] Error terminating process {jid}: {e}")
+                                print(
+                                    f"[Qwen-Studio] Error terminating process {jid}: {e}"
+                                )
                             finally:
                                 running_processes.pop(jid, None)
 
                     await hub.broadcast({"type": "job_update", "job": j})
                     save_jobs()
 
-            
             elif data.get("type") == "restart_job":
                 jid = data.get("job_id")
                 j = jobs.get(jid)
@@ -689,10 +774,11 @@ async def ws(ws: WebSocket):
                         s["progress"] = 0.0
                     job_queue.append(jid)
                     await hub.broadcast({"type": "job_update", "job": j})
-                    
+
     except WebSocketDisconnect:
         hub.remove(ws)
-        
+
+
 @app.post("/api/generate")
 async def api_generate(
     prompt: str = Form(...),
@@ -703,23 +789,34 @@ async def api_generate(
     num_images: Optional[int] = Form(1),
     lora: Optional[str] = Form(None),
     batman: Optional[bool] = Form(False),
-    size: str = Form("16:9"),    
+    size: str = Form("16:9"),
     max_retries: Optional[int] = Form(3),
 ):
     params = {
         "prompt": prompt,
         "steps": int(steps) if steps is not None else 50,
-        "seed": int(seed) if seed not in (None, "",) else None,
+        "seed": (
+            int(seed)
+            if seed
+            not in (
+                None,
+                "",
+            )
+            else None
+        ),
         "num_images": max(1, int(num_images) if num_images else 1),
         "lora": lora or None,
         "batman": bool(batman),
         "fast": bool(fast),
         "ultra_fast": bool(ultra_fast),
-        "size": size,  
+        "size": size,
     }
-    job = new_job("generate", params, max_retries=max_retries if max_retries is not None else 3)
+    job = new_job(
+        "generate", params, max_retries=max_retries if max_retries is not None else 3
+    )
     await hub.broadcast({"type": "job_update", "job": job})
     return {"job_id": job["id"]}
+
 
 @app.post("/api/edit")
 async def api_edit(
@@ -731,7 +828,7 @@ async def api_edit(
     seed: Optional[int] = Form(None),
     lora: Optional[str] = Form(None),
     batman: Optional[bool] = Form(False),
-    size: str = Form("16:9"),    
+    size: str = Form("16:9"),
     max_retries: Optional[int] = Form(3),
 ):
     suffix = Path(image.filename or "").suffix or ".png"
@@ -743,15 +840,25 @@ async def api_edit(
         "prompt": prompt,
         "image_path": image_path,
         "steps": int(steps) if steps is not None else 50,
-        "seed": int(seed) if seed not in (None, "",) else None,
+        "seed": (
+            int(seed)
+            if seed
+            not in (
+                None,
+                "",
+            )
+            else None
+        ),
         "lora": lora or None,
         "batman": bool(batman),
         "fast": bool(fast),
         "ultra_fast": bool(ultra_fast),
-        "size": size,  
+        "size": size,
         "output": None,
     }
-    job = new_job("edit", params, max_retries=max_retries if max_retries is not None else 3)
+    job = new_job(
+        "edit", params, max_retries=max_retries if max_retries is not None else 3
+    )
     job_dir = STATE_DIR / "jobs" / job["id"]
     job_dir.mkdir(parents=True, exist_ok=True)
     ext = Path(image_path).suffix or ".png"
@@ -766,6 +873,7 @@ async def api_edit(
     await hub.broadcast({"type": "job_update", "job": job})
     return {"job_id": job["id"]}
 
+
 async def gpu_stats_broadcaster():
     while True:
         try:
@@ -774,6 +882,7 @@ async def gpu_stats_broadcaster():
         except Exception as e:
             print(f"GPU stats broadcast error: {e}")
         await asyncio.sleep(2)
+
 
 @app.on_event("startup")
 async def _startup():
