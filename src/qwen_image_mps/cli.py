@@ -75,7 +75,7 @@ if os.getenv("QWEN_FA_SHIM", "0").strip().lower() in {"1", "true", "yes"}:
         print(f"ATTN: SEQ dim={dim} qlen={qlen} klen={klen}")
 
     def _sdpa_fa(*args, **kw):
-        nonlocal _fa_hits, _fa_fallbacks, _fa_dim_skips, _fa_seq_skips, _fa_errors
+        global _fa_hits, _fa_fallbacks, _fa_dim_skips, _fa_seq_skips, _fa_errors
 
         q = kw.get("query", args[0] if args else None)
         k = kw.get("key", args[1] if len(args) > 1 else None)
