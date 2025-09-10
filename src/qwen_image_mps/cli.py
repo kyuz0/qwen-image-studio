@@ -34,7 +34,7 @@ if os.getenv("QWEN_FA_SHIM", "0") in {"1", "true", "TRUE", "yes"}:
     _orig = F.scaled_dot_product_attention
 
     _dbg = os.getenv("QWEN_FA_DEBUG")
-    _sync = os.getenv("QWEN_FA_SYNC") not in {"", "0", "false", "False", "FALSE"}
+    _sync = os.getenv("QWEN_FA_SYNC", "0").lower() in {"1", "true", "yes", "on"}  
     _dims_env = os.getenv("QWEN_FA_DIMS", "64,128").strip()
     _allowed_dims = {int(x) for x in _dims_env.split(",") if x}
 
