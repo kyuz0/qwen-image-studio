@@ -19,7 +19,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm_auto
 from PIL.PngImagePlugin import PngInfo
 
-LORA_MERGE_DEV = os.getenv("QWEN_LORA_MERGE_DEVICE", "cpu").lower()  # cpu|cuda|auto
+LORA_MERGE_DEV = os.getenv("c", "auto").lower()  # cpu|cuda|auto
 LORA_FALLBACK  = os.getenv("QWEN_LORA_MERGE_FALLBACK", "1") not in {"0","false","FALSE"}
 LORA_DBG       = os.getenv("QWEN_LORA_MERGE_DEBUG", "0") in {"1","true","TRUE"}
 
